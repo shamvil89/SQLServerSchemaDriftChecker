@@ -1,0 +1,13 @@
+{
+  "databaseConfigurations": [
+    {
+      "name": "Test Environment Comparison",
+      "description": "Compare test source and target databases for drift detection",
+      "sourceServer": "localhost",
+      "sourceDatabase": "TestSourceDB",
+      "targetServer": "localhost",
+      "targetDatabase": "TestTargetDB",
+      "authType": "TrustedConnection"
+    }
+  ]
+}
