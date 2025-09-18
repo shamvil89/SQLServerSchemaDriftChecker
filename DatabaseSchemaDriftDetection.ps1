@@ -24,6 +24,37 @@ param(
     [string]$OutputPath = ".\SchemaComparisonReport.html"
 )
 
+# Function to clear all cached variables and ensure clean state
+function Clear-CachedVariables {
+    Write-Verbose "Clearing cached variables to ensure clean state..."
+    
+    # Clear global variables that might persist between script runs
+    $globalVarsToRemove = @(
+        "global:ComparisonData", "global:AuthConfig", "config", "selectedConfig",
+        "configContent", "sourceData", "targetData", "comparisonResults"
+    )
+    
+    foreach ($varName in $globalVarsToRemove) {
+        Remove-Variable -Name $varName -Scope Global -ErrorAction SilentlyContinue
+    }
+    
+    # Clear script-scoped variables that might conflict with parameters
+    $scriptVarsToRemove = @(
+        "sourceData", "targetData", "comparisonResults", "reportData"
+    )
+    
+    foreach ($varName in $scriptVarsToRemove) {
+        Remove-Variable -Name $varName -Scope Script -ErrorAction SilentlyContinue
+    }
+    
+    # Force garbage collection to free memory
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+}
+
+# Clear any cached variables to ensure clean state
+Clear-CachedVariables
+
 # Import required modules
 Import-Module SqlServer -ErrorAction SilentlyContinue
 if (-not (Get-Module SqlServer)) {
@@ -69,6 +100,17 @@ if (-not $SourceServer -or -not $SourceDatabase -or -not $TargetServer -or -not 
         $TargetServer = $selectedConfig.targetServer
         $TargetDatabase = $selectedConfig.targetDatabase
         
+        # Store authentication configuration for later use
+        $global:AuthConfig = @{
+            AuthType = $selectedConfig.authType
+            SourceAuthType = if ($selectedConfig.sourceAuthType) { $selectedConfig.sourceAuthType } else { $selectedConfig.authType }
+            TargetAuthType = if ($selectedConfig.targetAuthType) { $selectedConfig.targetAuthType } else { $selectedConfig.authType }
+            SourceUsername = $selectedConfig.sourceUsername
+            SourcePassword = $selectedConfig.sourcePassword
+            TargetUsername = $selectedConfig.targetUsername
+            TargetPassword = $selectedConfig.targetPassword
+        }
+        
         Write-Host "Using configuration: $($selectedConfig.name)" -ForegroundColor Green
         Write-Host "Source: $SourceServer.$SourceDatabase" -ForegroundColor Cyan
         Write-Host "Target: $TargetServer.$TargetDatabase" -ForegroundColor Cyan
@@ -80,6 +122,16 @@ if (-not $SourceServer -or -not $SourceDatabase -or -not $TargetServer -or -not 
 }
 else {
     Write-Host "Using direct parameters (JSON config overridden)" -ForegroundColor Yellow
+    # Initialize default auth config for direct parameters
+    $global:AuthConfig = @{
+        AuthType = "TrustedConnection"
+        SourceAuthType = "TrustedConnection"
+        TargetAuthType = "TrustedConnection"
+        SourceUsername = $null
+        SourcePassword = $null
+        TargetUsername = $null
+        TargetPassword = $null
+    }
 }
 
 # Final validation
@@ -88,7 +140,7 @@ if (-not $SourceServer -or -not $SourceDatabase -or -not $TargetServer -or -not 
     exit 1
 }
 
-# Global variables for storing comparison data
+# Initialize global variables for storing comparison data (ensures clean state)
 $global:ComparisonData = @{
     Tables = @()
     Columns = @()
@@ -138,7 +190,39 @@ function Invoke-SqlQuery {
     )
     
     try {
-        $connectionString = "Server=$Server;Database=$Database;Integrated Security=true;TrustServerCertificate=true;"
+        # Determine which credentials to use based on server
+        $isSourceServer = ($Server -eq $SourceServer)
+        
+        # Determine the authentication type for this specific server
+        $authType = if ($isSourceServer) { $global:AuthConfig.SourceAuthType } else { $global:AuthConfig.TargetAuthType }
+        
+        if ($authType -eq "SqlAuth") {
+            if ($isSourceServer) {
+                $username = $global:AuthConfig.SourceUsername
+                $password = $global:AuthConfig.SourcePassword
+            } else {
+                $username = $global:AuthConfig.TargetUsername
+                $password = $global:AuthConfig.TargetPassword
+            }
+            
+            if (-not $username -or -not $password) {
+                throw "SQL Authentication configured but username/password missing for server $Server"
+            }
+            
+            # Optimize for Azure SQL Database if server name contains .database.windows.net
+            if ($Server -like "*.database.windows.net") {
+                $connectionString = "Server=$Server;Database=$Database;User Id=$username;Password=$password;Encrypt=True;TrustServerCertificate=False;Connection Timeout=60;Application Name=SchemaDriftDetection;"
+            } else {
+                $connectionString = "Server=$Server;Database=$Database;User Id=$username;Password=$password;TrustServerCertificate=true;Connection Timeout=30;"
+            }
+        } elseif ($authType -eq "AzureAD") {
+            # Azure AD Integrated Authentication for Azure SQL Database
+            $connectionString = "Server=$Server;Database=$Database;Authentication=Active Directory Integrated;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+        } else {
+            # Default to Trusted Connection (Windows Auth)
+            $connectionString = "Server=$Server;Database=$Database;Integrated Security=true;TrustServerCertificate=true;"
+        }
+        
         $connection = New-Object System.Data.SqlClient.SqlConnection($connectionString)
         $connection.Open()
         
@@ -2912,8 +2996,8 @@ function New-HTMLReport {
         @{ Name = "VLF Information"; Data = $global:ComparisonData.VLF; KeyColumns = "file_id,vlf_sequence_number" },
         @{ Name = "Users"; Data = $global:ComparisonData.Users; KeyColumns = "USER_NAME" },
         @{ Name = "Roles"; Data = $global:ComparisonData.Roles; KeyColumns = "ROLE_NAME" },
-        @{ Name = "External Resources"; Data = $global:ComparisonData.ExternalResources; KeyColumns = "RESOURCE_NAME" }
-        @{ Name = "Query Store"; Data = $global:ComparisonData.QueryStore; KeyColumns = "QUERY_ID,PLAN_ID" }
+        @{ Name = "External Resources"; Data = $global:ComparisonData.ExternalResources; KeyColumns = "RESOURCE_NAME" },
+        @{ Name = "Query Store"; Data = $global:ComparisonData.QueryStore; KeyColumns = "ITEM_TYPE,OBJECT_NAME" }
     )
     
     # Generate sections separately to avoid string truncation
@@ -4781,22 +4865,44 @@ function New-SectionHTML {
                     $objectName = "VLF_$($item.Source.file_id)_$($item.Source.vlf_sequence_number)"
                     $details = "VLF configuration differences detected"
                 } elseif ($SectionName -eq "Query Store") {
-                    $qt = $item.Source["SHORT_QUERY_TEXT"]
-                    if ($qt) {
-                        $objectName = $qt
-                    } else {
-                        $qtFull = $item.Source["QUERY_TEXT"]
-                        if ($qtFull) {
-                            if ($qtFull.Length -gt 255) { $objectName = $qtFull.Substring(0,255) + '...' } else { $objectName = $qtFull }
-                        } else {
-                            $objectName = "QueryId=$($item.Source["QUERY_ID"]), PlanId=$($item.Source["PLAN_ID"])"
-                        }
-                    }
-                    $srcFull = [System.Web.HttpUtility]::HtmlEncode($item.Source["QUERY_TEXT"])
-                    $tgtFull = [System.Web.HttpUtility]::HtmlEncode($item.Target["QUERY_TEXT"])
+                    $objectName = $item.Source["OBJECT_NAME"]
+                    $itemType = $item.Source["ITEM_TYPE"]
                     
-                    $viewCodeBtn = "<button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='$srcFull' data-target-code='$tgtFull' onclick='showFunctionCodeFromData(this)'>View Code</button>"
-                    $details = "Query Store forced plan differences detected $viewCodeBtn"
+                    if ($itemType -eq "QS_CONFIG") {
+                        $diffDetails = @()
+                        if ($item.Differences) {
+                            foreach ($diffKey in $item.Differences.Keys) {
+                                $sourceVal = $item.Differences[$diffKey].Source
+                                $targetVal = $item.Differences[$diffKey].Target
+                                
+                                # Format specific configuration differences nicely
+                                $friendlyName = switch ($diffKey) {
+                                    "ACTUAL_STATE" { "Actual State" }
+                                    "DESIRED_STATE" { "Desired State" }
+                                    "CURRENT_STORAGE_SIZE_MB" { "Current Storage (MB)" }
+                                    "MAX_STORAGE_SIZE_MB" { "Max Storage (MB)" }
+                                    "QUERY_CAPTURE_MODE" { "Query Capture Mode" }
+                                    "SIZE_CLEANUP_MODE" { "Size Cleanup Mode" }
+                                    "STALE_QUERY_THRESHOLD_DAYS" { "Stale Query Threshold (Days)" }
+                                    "MAX_PLANS_PER_QUERY" { "Max Plans per Query" }
+                                    "WAIT_STATS_CAPTURE_MODE" { "Wait Stats Capture Mode" }
+                                    default { $diffKey }
+                                }
+                                
+                                $diffDetails += "<strong>$friendlyName</strong>: $sourceVal <span class='db-badge db-source'>$SourceDatabaseName</span> -> $targetVal <span class='db-badge db-target'>$TargetDatabaseName</span>"
+                            }
+                        }
+                        $details = ($diffDetails -join "<br>")
+                    } elseif ($itemType -eq "QS_FORCED_PLAN") {
+                        $queryText = [System.Web.HttpUtility]::HtmlEncode($item.Source["QUERY_TEXT"])
+                        $queryId = $item.Source["QUERY_ID"]
+                        $planId = $item.Source["PLAN_ID"]
+                        
+                        $viewCodeBtn = "<button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='$queryText' data-target-code='$queryText' onclick='showFunctionCodeFromData(this)'>View Query</button>"
+                        $details = "Forced plan differences - QueryID: $queryId, PlanID: $planId $viewCodeBtn"
+                    } else {
+                        $details = "Query Store item differences detected"
+                    }
                 } elseif ($SectionName -eq "Schemas") {
                     $objectName = $item.Source.SCHEMA_NAME
                     $diffDetails = @()
@@ -4971,37 +5077,24 @@ function New-SectionHTML {
                         $details = "Principal Id: $($item.PRINCIPAL_ID)"
                     }
                 } elseif ($SectionName -eq "Query Store") {
-                    $objectName = ""
-                    $qt = $item["SHORT_QUERY_TEXT"]
-                    if ($qt) {
-                        $objectName = $qt
-                    } else {
-                        $qtFull = $item["QUERY_TEXT"]
-                        if ($qtFull) {
-                            if ($qtFull.Length -gt 255) { $objectName = $qtFull.Substring(0,255) + '...' } else { $objectName = $qtFull }
-                        } else {
-                            $objectName = "QueryId=$($item["QUERY_ID"]), PlanId=$($item["PLAN_ID"])"
-                        }
-                    }
-                    $full = [System.Web.HttpUtility]::HtmlEncode($item["QUERY_TEXT"])
+                    $objectName = $item["OBJECT_NAME"]
+                    $itemType = $item["ITEM_TYPE"]
                     
-                    $viewCodeBtn = "<button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='$full' data-target-code='$full' onclick='showFunctionCodeFromData(this)'>View Code</button>"
-                    $details = "Forced plan present in source $viewCodeBtn"
-                } elseif ($SectionName -eq "Query Store") {
-                    $qt = $item["SHORT_QUERY_TEXT"]
-                    if ($qt) {
-                        $objectName = $qt
+                    if ($itemType -eq "QS_CONFIG") {
+                        $status = $item["QS_STATUS"]
+                        $state = $item["ACTUAL_STATE"]
+                        $details = "Query Store configuration present in source only - Status: $status, State: $state"
+                    } elseif ($itemType -eq "QS_FORCED_PLAN") {
+                        $queryText = [System.Web.HttpUtility]::HtmlEncode($item["QUERY_TEXT"])
+                        $queryId = $item["QUERY_ID"]
+                        $planId = $item["PLAN_ID"]
+                        
+                        $viewCodeBtn = "<button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='$queryText' data-target-code='' onclick='showFunctionCodeFromData(this)'>View Query</button>"
+                        $details = "Forced plan present in source only - QueryID: $queryId, PlanID: $planId $viewCodeBtn"
                     } else {
-                        $qtFull = $item["QUERY_TEXT"]
-                        if ($qtFull) {
-                            if ($qtFull.Length -gt 255) { $objectName = $qtFull.Substring(0,255) + '...' } else { $objectName = $qtFull }
-                        } else {
-                            $objectName = "QueryId=$($item["QUERY_ID"]), PlanId=$($item["PLAN_ID"])"
-                        }
+                        $details = "Query Store item present in source only"
                     }
-                    $full = [System.Web.HttpUtility]::HtmlEncode($item["QUERY_TEXT"])
-                    $viewCodeBtn = "<button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='$full' data-target-code='' onclick='showFunctionCodeFromData(this)'>View Code</button>"
-                    $details = "Forced plan present in source $viewCodeBtn"
+                # Old Query Store section removed - handled by new structure above
                 } elseif ($SectionName -eq "Query Store") {
                     $qt = $item["SHORT_QUERY_TEXT"]
                     if ($qt) {
@@ -5067,7 +5160,25 @@ function New-SectionHTML {
                 $details = ""
                 
                 # Extract object name based on section type (same logic as above)
-                if ($SectionName -eq "Tables") {
+                if ($SectionName -eq "Query Store") {
+                    $objectName = $item["OBJECT_NAME"]
+                    $itemType = $item["ITEM_TYPE"]
+                    
+                    if ($itemType -eq "QS_CONFIG") {
+                        $status = $item["QS_STATUS"]
+                        $state = $item["ACTUAL_STATE"]
+                        $details = "Query Store configuration present in source only - Status: $status, State: $state"
+                    } elseif ($itemType -eq "QS_FORCED_PLAN") {
+                        $queryText = [System.Web.HttpUtility]::HtmlEncode($item["QUERY_TEXT"])
+                        $queryId = $item["QUERY_ID"]
+                        $planId = $item["PLAN_ID"]
+                        
+                        $viewCodeBtn = "<button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='$queryText' data-target-code='' onclick='showFunctionCodeFromData(this)'>View Query</button>"
+                        $details = "Forced plan present in source only - QueryID: $queryId, PlanID: $planId $viewCodeBtn"
+                    } else {
+                        $details = "Query Store item present in source only"
+                    }
+                } elseif ($SectionName -eq "Tables") {
                     $objectName = "$($item.TABLE_SCHEMA).$($item.TABLE_NAME)"
                     $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.TABLE_SCHEMA)' data-table='$($item.TABLE_NAME)' data-source-create='$createStatement' data-target-create='' data-source-create-date='$($item.create_date)' data-target-create-date='' data-source-modify-date='$($item.modify_date)' data-target-modify-date='' data-source-row-count='$($item.ROW_COUNT)' data-target-row-count='' onclick='showTableCode(this)'>View Code</button>"
@@ -5358,44 +5469,134 @@ $targetFunctions = Get-FunctionInfo -Server $TargetServer -Database $TargetDatab
 $targetProcedures = Get-StoredProcedureInfo -Server $TargetServer -Database $TargetDatabase
 $targetSchemas = Get-SchemaInfo -Server $TargetServer -Database $TargetDatabase
 
-# Collect Query Store forced plans
-function Get-QueryStoreForcedPlans {
+# Collect detailed Query Store information including forced plans and configuration
+function Get-QueryStoreInfo {
     param([string]$Server, [string]$Database)
-    $query = @"
+    
+    # First get the configuration
+    $configQuery = @"
 SELECT 
-  qsq.query_id AS QUERY_ID,
-  qsp.plan_id AS PLAN_ID,
-  CAST(qt.query_sql_text AS NVARCHAR(MAX)) AS QUERY_TEXT,
-  CAST(LEFT(qt.query_sql_text,255) AS NVARCHAR(255)) AS SHORT_QUERY_TEXT,
-  TRY_CONVERT(XML, qsp.query_plan) AS QUERY_PLAN_XML
+    'QS_CONFIG' AS ITEM_TYPE,
+    'Query Store Configuration' AS OBJECT_NAME,
+    DB_NAME() AS DATABASE_NAME,
+    CASE 
+        WHEN EXISTS (SELECT 1 FROM sys.database_query_store_options WHERE actual_state_desc IN ('READ_WRITE', 'READ_ONLY'))
+        THEN 'ENABLED'
+        ELSE 'DISABLED'
+    END AS QS_STATUS,
+    ISNULL((SELECT actual_state_desc FROM sys.database_query_store_options), 'OFF') AS ACTUAL_STATE,
+    ISNULL((SELECT desired_state_desc FROM sys.database_query_store_options), 'OFF') AS DESIRED_STATE,
+    ISNULL((SELECT current_storage_size_mb FROM sys.database_query_store_options), 0) AS CURRENT_STORAGE_SIZE_MB,
+    ISNULL((SELECT max_storage_size_mb FROM sys.database_query_store_options), 0) AS MAX_STORAGE_SIZE_MB,
+    ISNULL((SELECT query_capture_mode_desc FROM sys.database_query_store_options), 'NONE') AS QUERY_CAPTURE_MODE,
+    ISNULL((SELECT size_based_cleanup_mode_desc FROM sys.database_query_store_options), 'OFF') AS SIZE_CLEANUP_MODE,
+    ISNULL((SELECT stale_query_threshold_days FROM sys.database_query_store_options), 0) AS STALE_QUERY_THRESHOLD_DAYS,
+    ISNULL((SELECT max_plans_per_query FROM sys.database_query_store_options), 0) AS MAX_PLANS_PER_QUERY,
+    ISNULL((SELECT wait_stats_capture_mode_desc FROM sys.database_query_store_options), 'NONE') AS WAIT_STATS_CAPTURE_MODE,
+    CAST(NULL AS NVARCHAR(MAX)) AS QUERY_TEXT,
+    CAST(NULL AS INT) AS QUERY_ID,
+    CAST(NULL AS INT) AS PLAN_ID,
+    CAST(NULL AS XML) AS QUERY_PLAN_XML
+UNION ALL
+SELECT 
+    'QS_FORCED_PLAN' AS ITEM_TYPE,
+    CASE 
+        WHEN LEN(CAST(qt.query_sql_text AS NVARCHAR(MAX))) > 0
+        THEN CAST(LEFT(qt.query_sql_text, 300) AS NVARCHAR(300)) + 
+             CASE WHEN LEN(qt.query_sql_text) > 300 THEN '...' ELSE '' END
+        ELSE 'QueryID=' + CAST(qsq.query_id AS NVARCHAR(20)) + ', PlanID=' + CAST(qsp.plan_id AS NVARCHAR(20))
+    END AS OBJECT_NAME,
+    DB_NAME() AS DATABASE_NAME,
+    'ENABLED' AS QS_STATUS,
+    'FORCED_PLAN' AS ACTUAL_STATE,
+    'FORCED_PLAN' AS DESIRED_STATE,
+    CAST(0 AS DECIMAL(18,2)) AS CURRENT_STORAGE_SIZE_MB,
+    CAST(0 AS DECIMAL(18,2)) AS MAX_STORAGE_SIZE_MB,
+    'FORCED' AS QUERY_CAPTURE_MODE,
+    'AUTO' AS SIZE_CLEANUP_MODE,
+    CAST(0 AS BIGINT) AS STALE_QUERY_THRESHOLD_DAYS,
+    CAST(1 AS BIGINT) AS MAX_PLANS_PER_QUERY,
+    'ON' AS WAIT_STATS_CAPTURE_MODE,
+    CAST(qt.query_sql_text AS NVARCHAR(MAX)) AS QUERY_TEXT,
+    qsq.query_id AS QUERY_ID,
+    qsp.plan_id AS PLAN_ID,
+    TRY_CONVERT(XML, qsp.query_plan) AS QUERY_PLAN_XML
 FROM sys.query_store_plan AS qsp
 JOIN sys.query_store_query AS qsq ON qsp.query_id = qsq.query_id
 JOIN sys.query_store_query_text AS qt ON qsq.query_text_id = qt.query_text_id
 WHERE qsp.is_forced_plan = 1
-  AND TRY_CONVERT(XML, qsp.query_plan) IS NOT NULL;
+  AND TRY_CONVERT(XML, qsp.query_plan) IS NOT NULL
+ORDER BY ITEM_TYPE, OBJECT_NAME;
 "@
-    return Invoke-SqlQuery -Server $Server -Database $Database -Query $query
+    return Invoke-SqlQuery -Server $Server -Database $Database -Query $configQuery
 }
-Write-Host "Collecting Query Store forced plans from source..." -ForegroundColor Yellow
-$sourceQueryStore = Get-QueryStoreForcedPlans -Server $SourceServer -Database $SourceDatabase
-Write-Host "Collecting Query Store forced plans from target..." -ForegroundColor Yellow
-$targetQueryStore = Get-QueryStoreForcedPlans -Server $TargetServer -Database $TargetDatabase
+Write-Host "Collecting Query Store information from source..." -ForegroundColor Yellow
+try {
+    $sourceQueryStore = Get-QueryStoreInfo -Server $SourceServer -Database $SourceDatabase
+    Write-Host "Source Query Store query executed successfully" -ForegroundColor Green
+    if ($sourceQueryStore) {
+        Write-Host "DEBUG: Source returned $($sourceQueryStore.GetType().Name)" -ForegroundColor Yellow
+        if ($sourceQueryStore.GetType().Name -eq "DataTable") {
+            Write-Host "DEBUG: Source has $($sourceQueryStore.Rows.Count) rows" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "DEBUG: Source returned null" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "ERROR in source Query Store: $($_.Exception.Message)" -ForegroundColor Red
+    $sourceQueryStore = $null
+}
+Write-Host "Collecting Query Store information from target..." -ForegroundColor Yellow
+try {
+    $targetQueryStore = Get-QueryStoreInfo -Server $TargetServer -Database $TargetDatabase
+    Write-Host "Target Query Store query executed successfully" -ForegroundColor Green
+} catch {
+    Write-Host "ERROR in target Query Store: $($_.Exception.Message)" -ForegroundColor Red
+    $targetQueryStore = $null
+}
 if ($sourceQueryStore) {
-    if ($sourceQueryStore.GetType().Name -eq "DataTable") {
-        $count = $sourceQueryStore.Rows.Count
+    if ($sourceQueryStore.GetType().Name -eq "DataTable" -and $sourceQueryStore.Rows.Count -gt 0) {
+        $configRow = $sourceQueryStore.Rows | Where-Object { $_.ITEM_TYPE -eq 'QS_CONFIG' } | Select-Object -First 1
+        $forcedPlans = $sourceQueryStore.Rows | Where-Object { $_.ITEM_TYPE -eq 'QS_FORCED_PLAN' }
+        if ($configRow) {
+            Write-Host "Source Query Store: $($configRow.QS_STATUS) - State: $($configRow.ACTUAL_STATE) (Items: $($sourceQueryStore.Rows.Count))" -ForegroundColor Magenta
+        } else {
+            Write-Host "Source Query Store: Items: $($sourceQueryStore.Rows.Count)" -ForegroundColor Magenta
+        }
+    } elseif ($sourceQueryStore.GetType().Name -eq "Object[]" -and $sourceQueryStore.Count -gt 0) {
+        $configRow = $sourceQueryStore | Where-Object { $_.ITEM_TYPE -eq 'QS_CONFIG' } | Select-Object -First 1
+        $forcedPlans = $sourceQueryStore | Where-Object { $_.ITEM_TYPE -eq 'QS_FORCED_PLAN' }
+        if ($configRow) {
+            Write-Host "Source Query Store: $($configRow.QS_STATUS) - State: $($configRow.ACTUAL_STATE) (Items: $($sourceQueryStore.Count))" -ForegroundColor Magenta
+        } else {
+            Write-Host "Source Query Store: Items: $($sourceQueryStore.Count)" -ForegroundColor Magenta
+        }
     } else {
-        $count = ($sourceQueryStore | Measure-Object).Count
+        Write-Host "Source Query Store: No data" -ForegroundColor Magenta
     }
-    Write-Host "Source Query Store forced plans: $count" -ForegroundColor Magenta
-} else { Write-Host "Source Query Store forced plans: No data" -ForegroundColor Magenta }
+} else { Write-Host "Source Query Store: No data" -ForegroundColor Magenta }
+
 if ($targetQueryStore) {
-    if ($targetQueryStore.GetType().Name -eq "DataTable") {
-        $count = $targetQueryStore.Rows.Count
+    if ($targetQueryStore.GetType().Name -eq "DataTable" -and $targetQueryStore.Rows.Count -gt 0) {
+        $configRow = $targetQueryStore.Rows | Where-Object { $_.ITEM_TYPE -eq 'QS_CONFIG' } | Select-Object -First 1
+        $forcedPlans = $targetQueryStore.Rows | Where-Object { $_.ITEM_TYPE -eq 'QS_FORCED_PLAN' }
+        if ($configRow) {
+            Write-Host "Target Query Store: $($configRow.QS_STATUS) - State: $($configRow.ACTUAL_STATE) (Items: $($targetQueryStore.Rows.Count))" -ForegroundColor Magenta
+        } else {
+            Write-Host "Target Query Store: Items: $($targetQueryStore.Rows.Count)" -ForegroundColor Magenta
+        }
+    } elseif ($targetQueryStore.GetType().Name -eq "Object[]" -and $targetQueryStore.Count -gt 0) {
+        $configRow = $targetQueryStore | Where-Object { $_.ITEM_TYPE -eq 'QS_CONFIG' } | Select-Object -First 1
+        $forcedPlans = $targetQueryStore | Where-Object { $_.ITEM_TYPE -eq 'QS_FORCED_PLAN' }
+        if ($configRow) {
+            Write-Host "Target Query Store: $($configRow.QS_STATUS) - State: $($configRow.ACTUAL_STATE) (Items: $($targetQueryStore.Count))" -ForegroundColor Magenta
+        } else {
+            Write-Host "Target Query Store: Items: $($targetQueryStore.Count)" -ForegroundColor Magenta
+        }
     } else {
-        $count = ($targetQueryStore | Measure-Object).Count
+        Write-Host "Target Query Store: No data" -ForegroundColor Magenta
     }
-    Write-Host "Target Query Store forced plans: $count" -ForegroundColor Magenta
-} else { Write-Host "Target Query Store forced plans: No data" -ForegroundColor Magenta }
+} else { Write-Host "Target Query Store: No data" -ForegroundColor Magenta }
 
 # Collect data types
 $sourceDataTypes = Get-DataTypeInfo -Server $SourceServer -Database $SourceDatabase
@@ -6262,19 +6463,14 @@ if ($sourceRoles -or $targetRoles) {
     }
 }
 
-# Compare Query Store forced plans (by QUERY_ID, PLAN_ID)
-if ($sourceQueryStore -or $targetQueryStore) {
-    Write-Host "Comparing Query Store forced plans..." -ForegroundColor Yellow
-    $global:ComparisonData.QueryStore = Compare-Datasets -Source $sourceQueryStore -Target $targetQueryStore -KeyColumns "QUERY_ID,PLAN_ID"
-    Write-Host "Query Store comparison results:" -ForegroundColor Cyan
-    Write-Host "  Matches: $($global:ComparisonData.QueryStore.Matches.Count)" -ForegroundColor Green
-    Write-Host "  Source Only: $($global:ComparisonData.QueryStore.SourceOnly.Count)" -ForegroundColor Yellow
-    Write-Host "  Target Only: $($global:ComparisonData.QueryStore.TargetOnly.Count)" -ForegroundColor Blue
-    Write-Host "  Differences: $($global:ComparisonData.QueryStore.Differences.Count)" -ForegroundColor Red
-} else {
-    Write-Host "Warning: Query Store data missing on source/target" -ForegroundColor Yellow
-    $global:ComparisonData.QueryStore = @{ Matches=@(); SourceOnly=@(); TargetOnly=@(); Differences=@() }
-}
+# Compare Query Store configuration and forced plans (by ITEM_TYPE,OBJECT_NAME)
+Write-Host "Comparing Query Store configuration and forced plans..." -ForegroundColor Yellow
+$global:ComparisonData.QueryStore = Compare-Datasets -Source $sourceQueryStore -Target $targetQueryStore -KeyColumns "ITEM_TYPE,OBJECT_NAME"
+Write-Host "Query Store comparison results:" -ForegroundColor Cyan
+Write-Host "  Matches: $($global:ComparisonData.QueryStore.Matches.Count)" -ForegroundColor Green
+Write-Host "  Source Only: $($global:ComparisonData.QueryStore.SourceOnly.Count)" -ForegroundColor Yellow
+Write-Host "  Target Only: $($global:ComparisonData.QueryStore.TargetOnly.Count)" -ForegroundColor Blue
+Write-Host "  Differences: $($global:ComparisonData.QueryStore.Differences.Count)" -ForegroundColor Red
 # Compare database options (individual settings)
 if ($sourceDatabaseOptions -or $targetDatabaseOptions) {
     Write-Host "Comparing database option settings..." -ForegroundColor Yellow
@@ -6386,3 +6582,7 @@ Write-Host "`nOpening report in default browser..." -ForegroundColor Yellow
 Start-Process $OutputPath
 
 Write-Host "`nDatabase Schema Drift Detection completed!" -ForegroundColor Green
+
+# Clean up variables after completion to free memory
+Write-Verbose "Cleaning up variables after completion..."
+Clear-CachedVariables

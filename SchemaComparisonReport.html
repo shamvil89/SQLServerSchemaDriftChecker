@@ -855,7 +855,7 @@
     <div class="header">
         <h1>Database Schema Drift Detection Report</h1>
         <p>Source: localhost.TestSourceDB | Target: localhost.TestTargetDB</p>
-        <p>Generated on: 2025-09-16 23:51:50</p>
+        <p>Generated on: 2025-09-19 03:16:37</p>
     </div>
     <div class="summary">
         <h2>Schema Drift Summary</h2>
@@ -1336,23 +1336,23 @@
             <div class="summary-card" onclick="selectAllFiltersAndShowAll('Query Store')">
                 <div class="summary-header">
                     <h3>Query Store</h3>
-                    <span class="total-count">2 total</span>
+                    <span class="total-count">4 total</span>
                 </div>
                 <div class="summary-breakdown">
-                    <div class="breakdown-item match" onclick="filterByStatus('Query Store', 'match', event)" title="Query plans consistent across source and target (0 of 2)">
+                    <div class="breakdown-item match" onclick="filterByStatus('Query Store', 'match', event)" title="Query plans consistent across source and target (0 of 4)">
                         <span class="count" style="width: 0%">0</span>
                         <span class="label">Match</span>
                     </div>
-                    <div class="breakdown-item source-only" onclick="filterByStatus('Query Store', 'source-only', event)" title="Forced plans only in source (0 of 2)">
+                    <div class="breakdown-item source-only" onclick="filterByStatus('Query Store', 'source-only', event)" title="Forced plans only in source (0 of 4)">
                         <span class="count" style="width: 0%">0</span>
                         <span class="label">Source Only</span>
                     </div>
-                    <div class="breakdown-item target-only" onclick="filterByStatus('Query Store', 'target-only', event)" title="Forced plans only in target (2 of 2)">
-                        <span class="count" style="width: 100%">2</span>
+                    <div class="breakdown-item target-only" onclick="filterByStatus('Query Store', 'target-only', event)" title="Forced plans only in target (3 of 4)">
+                        <span class="count" style="width: 75%">3</span>
                         <span class="label">Target Only</span>
                     </div>
-                    <div class="breakdown-item mismatch" onclick="filterByStatus('Query Store', 'mismatch', event)" title="Query store differences (e.g., forced plan mismatch) (0 of 2)">
-                        <span class="count" style="width: 0%">0</span>
+                    <div class="breakdown-item mismatch" onclick="filterByStatus('Query Store', 'mismatch', event)" title="Query store differences (e.g., forced plan mismatch) (1 of 4)">
+                        <span class="count" style="width: 25%">1</span>
                         <span class="label">Differences</span>
                     </div>
                 </div>
@@ -4953,34 +4953,33 @@ GRANT SELECT ON SCHEMA::[Finance] TO [Finance_ReadOnly];' data-source-type='DATA
                     </tr>
                 </thead>
                 <tbody>
-                    <tr class="target-only">
+                    <tr class="mismatch">
                         <td>1</td>
-                        <td>SELECT 
-    s.name as SCHEMA_NAME,
-    o.name as FUNCTION_NAME,
-    o.type_desc as FUNCTION_TYPE,
-    o.create_date,
-    o.modify_date,
-    m.definition
-FROM sys.objects o
-INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
-INNER JOIN sys.sql_m</td>
-                        <td><span class="status-badge status-target-only">Target Only</span></td>
-                        <td>Forced plan present in target <button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='' data-target-code='SELECT 
-    s.name as SCHEMA_NAME,
-    o.name as FUNCTION_NAME,
-    o.type_desc as FUNCTION_TYPE,
-    o.create_date,
-    o.modify_date,
-    m.definition
-FROM sys.objects o
-INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
-INNER JOIN sys.sql_modules m ON o.object_id = m.object_id
-WHERE o.type IN (&#39;FN&#39;, &#39;IF&#39;, &#39;TF&#39;, &#39;FS&#39;, &#39;FT&#39;)
-ORDER BY s.name, o.name' onclick='showFunctionCodeFromData(this)'>View Code</button></td>
+                        <td>Query Store Configuration</td>
+                        <td><span class="status-badge status-mismatch">Mismatch</span></td>
+                        <td><strong>DATABASE_NAME</strong>: TestSourceDB <span class='db-badge db-source'>TestSourceDB</span> -> TestTargetDB <span class='db-badge db-target'>TestTargetDB</span><br><strong>Max Storage (MB)</strong>: 1000.00 <span class='db-badge db-source'>TestSourceDB</span> -> 100.00 <span class='db-badge db-target'>TestTargetDB</span></td>
                     </tr>
                     <tr class="target-only">
                         <td>2</td>
+                        <td>SELECT 
+    s.name as SCHEMA_NAME,
+    syn.name as SYNONYM_NAME,
+    syn.base_object_name,
+    &#39;CREATE SYNONYM [&#39; + s.name + &#39;].[&#39; + syn.name + &#39;] FOR &#39; + syn.base_object_name as CREATE_STATEMENT
+FROM sys.synonyms syn
+INNER JOIN sys.schemas s ON syn...</td>
+                        <td><span class="status-badge status-target-only">Target Only</span></td>
+                        <td>Forced plan present in target <button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='' data-target-code='SELECT 
+    s.name as SCHEMA_NAME,
+    syn.name as SYNONYM_NAME,
+    syn.base_object_name,
+    &#39;CREATE SYNONYM [&#39; + s.name + &#39;].[&#39; + syn.name + &#39;] FOR &#39; + syn.base_object_name as CREATE_STATEMENT
+FROM sys.synonyms syn
+INNER JOIN sys.schemas s ON syn.schema_id = s.schema_id
+ORDER BY s.name, syn.name' onclick='showFunctionCodeFromData(this)'>View Code</button></td>
+                    </tr>
+                    <tr class="target-only">
+                        <td>3</td>
                         <td>SELECT 
     name,
     -- All database options from sys.databases
@@ -4991,7 +4990,7 @@ ORDER BY s.name, o.name' onclick='showFunctionCodeFromData(this)'>View Code</but
     containment_desc,
     target_recovery_time_in_seconds,
     is_auto_close_on,
-</td>
+...</td>
                         <td><span class="status-badge status-target-only">Target Only</span></td>
                         <td>Forced plan present in target <button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='' data-target-code='SELECT 
     name,
@@ -5027,6 +5026,32 @@ ORDER BY s.name, o.name' onclick='showFunctionCodeFromData(this)'>View Code</but
     is_trustworthy_on
 FROM sys.databases
 WHERE name = &#39;TestTargetDB&#39;' onclick='showFunctionCodeFromData(this)'>View Code</button></td>
+                    </tr>
+                    <tr class="target-only">
+                        <td>4</td>
+                        <td>SELECT 
+    s.name as SCHEMA_NAME,
+    o.name as FUNCTION_NAME,
+    o.type_desc as FUNCTION_TYPE,
+    o.create_date,
+    o.modify_date,
+    m.definition
+FROM sys.objects o
+INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+INNER JOIN sys.sql_m...</td>
+                        <td><span class="status-badge status-target-only">Target Only</span></td>
+                        <td>Forced plan present in target <button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='' data-target-code='SELECT 
+    s.name as SCHEMA_NAME,
+    o.name as FUNCTION_NAME,
+    o.type_desc as FUNCTION_TYPE,
+    o.create_date,
+    o.modify_date,
+    m.definition
+FROM sys.objects o
+INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+INNER JOIN sys.sql_modules m ON o.object_id = m.object_id
+WHERE o.type IN (&#39;FN&#39;, &#39;IF&#39;, &#39;TF&#39;, &#39;FS&#39;, &#39;FT&#39;)
+ORDER BY s.name, o.name' onclick='showFunctionCodeFromData(this)'>View Code</button></td>
                     </tr>                </tbody>
             </table>        </div>
     </div>    <script>
