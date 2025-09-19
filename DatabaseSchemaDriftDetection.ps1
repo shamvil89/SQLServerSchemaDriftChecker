@@ -1664,6 +1664,26 @@ function New-HTMLReport {
         .sort-btn:hover { background: rgba(255,255,255,0.25); }
         .sort-btn:active { transform: scale(0.98); }
         
+        /* Floating expand/collapse button */
+        .float-toggle {
+            position: fixed;
+            right: 24px;
+            bottom: 24px;
+            z-index: 1000;
+        }
+        .float-toggle button {
+            background: #2b7cff;
+            color: #fff;
+            border: none;
+            padding: 12px 16px;
+            border-radius: 24px;
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .float-toggle button:hover { filter: brightness(1.05); }
+        .float-toggle button:active { transform: translateY(1px); }
+        
         .summary {
             background: white;
             padding: 25px;
@@ -1701,12 +1721,40 @@ function New-HTMLReport {
             box-sizing: border-box;
             will-change: transform;
             backface-visibility: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
         }
         
         .summary-card:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 8px rgba(0,0,0,0.15);
         }
+        .summary-card.selected {
+            border: 2px solid #3b82f6; /* blue */
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+            position: relative;
+        }
+        .summary-card .check-badge {
+            position: absolute;
+            top: 6px;
+            left: 8px; /* place on the left */
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background-color: #3b82f6; /* blue circle */
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='white' d='M9 16.2 5.5 12.7 4 14.2l5 5 11-11-1.5-1.5z'/></svg>");
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: 16px 16px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            color: transparent; /* hide any inner text */
+            z-index: 2;
+        }
+        .summary-card.selected .check-badge { display: block; }
         
         .summary-header {
             display: flex;
@@ -1714,7 +1762,12 @@ function New-HTMLReport {
             align-items: center;
             margin-bottom: 15px;
             padding-bottom: 10px;
+            padding-left: 44px; /* space for larger left badge */
             border-bottom: 2px solid #dee2e6;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
         }
         
         .summary-header h3 {
@@ -1722,7 +1775,6 @@ function New-HTMLReport {
             font-size: 1.2em;
             color: #495057;
         }
-        
         .total-count {
             background: #007bff;
             color: white;
@@ -1736,6 +1788,10 @@ function New-HTMLReport {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 8px;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
             margin-top: 15px;
         }
         
@@ -2072,7 +2128,6 @@ function New-HTMLReport {
             padding: 0;
             opacity: 0;
         }
-        
         .comparison-table {
             width: 100%;
             border-collapse: collapse;
@@ -2409,7 +2464,6 @@ function New-HTMLReport {
             align-items: flex-start;
             min-height: 1.5em;
         }
-        
         .line-number {
             background: #374151;
             color: #9ca3af;
@@ -2485,7 +2539,11 @@ function New-HTMLReport {
 
     <div class="export-buttons">
         <button class="export-btn" onclick="exportToExcel()">Export to Excel</button>
-        <button class="export-btn" onclick="window.print()">Print Report</button>
+        <button class="export-btn" onclick="exportToPDF()">Export to PDF</button>
+    </div>
+    
+    <div class="float-toggle">
+        <button id="toggleAllBtn" onclick="toggleAllSections()">Expand All</button>
     </div>
     
     <div class="header">
@@ -2493,16 +2551,17 @@ function New-HTMLReport {
         <p>Source: $SourceServer.$SourceDatabase | Target: $TargetServer.$TargetDatabase</p>
         <p>Generated on: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")</p>
         <div class="header-controls">
-            <button id="sort-alpha-btn" class="sort-btn" title="Arrange cards alphabetically" onclick="window.sortAlphaAndSections && window.sortAlphaAndSections()">Sort A–Z</button>
+            <button id="sort-alpha-btn" class="sort-btn" title="Arrange cards alphabetically" onclick="window.sortAlphaAndSections && window.sortAlphaAndSections()">Sort A-Z</button>
             <button id="sort-category-btn" class="sort-btn" title="Arrange cards by category" onclick="window.sortCategoryAndSections && window.sortCategoryAndSections()">Sort by Category</button>
         </div>
     </div>
     <div class="summary">
         <h2>Schema Drift Summary</h2>
         <div id="summaryCards" class="summary-cards">
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('Schemas')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('Schemas')" oncontextmenu="return markSummarySelected(event, this, 'Schemas')">
                 <div class="summary-header">
                     <h3>Schemas</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.Schemas.Matches.Count + $global:ComparisonData.Schemas.SourceOnly.Count + $global:ComparisonData.Schemas.TargetOnly.Count + $global:ComparisonData.Schemas.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2524,9 +2583,10 @@ function New-HTMLReport {
                     </div>
                 </div>
             </div>
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('tables')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('tables')" oncontextmenu="return markSummarySelected(event, this, 'tables')">
                 <div class="summary-header">
                     <h3>Tables</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.Tables.Matches.Count + $global:ComparisonData.Tables.SourceOnly.Count + $global:ComparisonData.Tables.TargetOnly.Count + $global:ComparisonData.Tables.Differences.Count) total</span>
             </div>
                 <div class="summary-breakdown">
@@ -2549,9 +2609,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('columns')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('columns')" oncontextmenu="return markSummarySelected(event, this, 'columns')">
                 <div class="summary-header">
                     <h3>Columns</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.Columns.Matches.Count + $global:ComparisonData.Columns.SourceOnly.Count + $global:ComparisonData.Columns.TargetOnly.Count + $global:ComparisonData.Columns.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2574,9 +2635,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('indexes')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('indexes')" oncontextmenu="return markSummarySelected(event, this, 'indexes')">
                 <div class="summary-header">
                     <h3>Indexes</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.Indexes.Matches.Count + $global:ComparisonData.Indexes.SourceOnly.Count + $global:ComparisonData.Indexes.TargetOnly.Count + $global:ComparisonData.Indexes.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2599,9 +2661,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('functions')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('functions')" oncontextmenu="return markSummarySelected(event, this, 'functions')">
                 <div class="summary-header">
                     <h3>Functions</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.Functions.Matches.Count + $global:ComparisonData.Functions.SourceOnly.Count + $global:ComparisonData.Functions.TargetOnly.Count + $global:ComparisonData.Functions.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2624,9 +2687,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('stored-procedures')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('stored-procedures')" oncontextmenu="return markSummarySelected(event, this, 'stored-procedures')">
                 <div class="summary-header">
                     <h3>Stored Procedures</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.StoredProcedures.Matches.Count + $global:ComparisonData.StoredProcedures.SourceOnly.Count + $global:ComparisonData.StoredProcedures.TargetOnly.Count + $global:ComparisonData.StoredProcedures.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2648,9 +2712,10 @@ function New-HTMLReport {
                     </div>
                 </div>
             </div>
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('data-types')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('data-types')" oncontextmenu="return markSummarySelected(event, this, 'data-types')">
                 <div class="summary-header">
                     <h3>Data Types</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.DataTypes.Matches.Count + $global:ComparisonData.DataTypes.SourceOnly.Count + $global:ComparisonData.DataTypes.TargetOnly.Count + $global:ComparisonData.DataTypes.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2673,9 +2738,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('constraints')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('constraints')" oncontextmenu="return markSummarySelected(event, this, 'constraints')">
                 <div class="summary-header">
                     <h3>Constraints</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.Constraints.Matches.Count + $global:ComparisonData.Constraints.SourceOnly.Count + $global:ComparisonData.Constraints.TargetOnly.Count + $global:ComparisonData.Constraints.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2698,9 +2764,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('views')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('views')" oncontextmenu="return markSummarySelected(event, this, 'views')">
                 <div class="summary-header">
                     <h3>Views</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.Views.Matches.Count + $global:ComparisonData.Views.SourceOnly.Count + $global:ComparisonData.Views.TargetOnly.Count + $global:ComparisonData.Views.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2723,9 +2790,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('synonyms')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('synonyms')" oncontextmenu="return markSummarySelected(event, this, 'synonyms')">
                 <div class="summary-header">
                     <h3>Synonyms</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.Synonyms.Matches.Count + $global:ComparisonData.Synonyms.SourceOnly.Count + $global:ComparisonData.Synonyms.TargetOnly.Count + $global:ComparisonData.Synonyms.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2747,10 +2815,10 @@ function New-HTMLReport {
                     </div>
                 </div>
             </div>
-            
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('table-triggers')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('table-triggers')" oncontextmenu="return markSummarySelected(event, this, 'table-triggers')">
                 <div class="summary-header">
                     <h3>Table Triggers</h3>
+                    <span class="check-badge"></span>
                     <span class="total-count">$($global:ComparisonData.TableTriggers.Matches.Count + $global:ComparisonData.TableTriggers.SourceOnly.Count + $global:ComparisonData.TableTriggers.TargetOnly.Count + $global:ComparisonData.TableTriggers.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2773,9 +2841,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('database-triggers')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('database-triggers')" oncontextmenu="return markSummarySelected(event, this, 'database-triggers')">
                 <div class="summary-header">
                     <h3>Database Triggers</h3>
+                    <span class="check-badge">✓</span>
                     <span class="total-count">$($global:ComparisonData.DatabaseTriggers.Matches.Count + $global:ComparisonData.DatabaseTriggers.SourceOnly.Count + $global:ComparisonData.DatabaseTriggers.TargetOnly.Count + $global:ComparisonData.DatabaseTriggers.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2798,9 +2867,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('keys')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('keys')" oncontextmenu="return markSummarySelected(event, this, 'keys')">
                 <div class="summary-header">
                     <h3>Keys</h3>
+                    <span class="check-badge">✓</span>
                     <span class="total-count">$($global:ComparisonData.Keys.Matches.Count + $global:ComparisonData.Keys.SourceOnly.Count + $global:ComparisonData.Keys.TargetOnly.Count + $global:ComparisonData.Keys.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2823,9 +2893,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('database-options')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('database-options')" oncontextmenu="return markSummarySelected(event, this, 'database-options')">
                 <div class="summary-header">
                     <h3>Database Options</h3>
+                    <span class="check-badge">✓</span>
                     <span class="total-count">$($global:ComparisonData.DatabaseOptions.Matches.Count + $global:ComparisonData.DatabaseOptions.SourceOnly.Count + $global:ComparisonData.DatabaseOptions.TargetOnly.Count + $global:ComparisonData.DatabaseOptions.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2847,9 +2918,10 @@ function New-HTMLReport {
                     </div>
                 </div>
             </div>
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('file-information')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('file-information')" oncontextmenu="return markSummarySelected(event, this, 'file-information')">
                 <div class="summary-header">
                     <h3>File Information</h3>
+                    <span class="check-badge">✓</span>
                     <span class="total-count">$($global:ComparisonData.FileInfo.Matches.Count + $global:ComparisonData.FileInfo.SourceOnly.Count + $global:ComparisonData.FileInfo.TargetOnly.Count + $global:ComparisonData.FileInfo.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2873,9 +2945,10 @@ function New-HTMLReport {
             </div>
 
                         
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('VLF Information')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('VLF Information')" oncontextmenu="return markSummarySelected(event, this, 'VLF Information')">
                 <div class="summary-header">
                     <h3>VLF Information</h3>
+                    <span class="check-badge">✓</span>
                     <span class="total-count">$($global:ComparisonData.VLF.Matches.Count + $global:ComparisonData.VLF.SourceOnly.Count + $global:ComparisonData.VLF.TargetOnly.Count + $global:ComparisonData.VLF.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2898,9 +2971,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('Users')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('Users')" oncontextmenu="return markSummarySelected(event, this, 'Users')">
                 <div class="summary-header">
                     <h3>Users</h3>
+                    <span class="check-badge">✓</span>
                     <span class="total-count">$($global:ComparisonData.Users.Matches.Count + $global:ComparisonData.Users.SourceOnly.Count + $global:ComparisonData.Users.TargetOnly.Count + $global:ComparisonData.Users.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2923,9 +2997,10 @@ function New-HTMLReport {
                 </div>
             </div>
             
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('Roles')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('Roles')" oncontextmenu="return markSummarySelected(event, this, 'Roles')">
                 <div class="summary-header">
                     <h3>Roles</h3>
+                    <span class="check-badge">✓</span>
                     <span class="total-count">$($global:ComparisonData.Roles.Matches.Count + $global:ComparisonData.Roles.SourceOnly.Count + $global:ComparisonData.Roles.TargetOnly.Count + $global:ComparisonData.Roles.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2948,9 +3023,10 @@ function New-HTMLReport {
                 </div>
             </div>
 
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('External Resources')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('External Resources')" oncontextmenu="return markSummarySelected(event, this, 'External Resources')">
                 <div class="summary-header">
                     <h3>External Resources</h3>
+                    <span class="check-badge">✓</span>
                     <span class="total-count">$($global:ComparisonData.ExternalResources.Matches.Count + $global:ComparisonData.ExternalResources.SourceOnly.Count + $global:ComparisonData.ExternalResources.TargetOnly.Count + $global:ComparisonData.ExternalResources.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -2973,9 +3049,10 @@ function New-HTMLReport {
                 </div>
             </div>
 
-            <div class="summary-card" onclick="selectAllFiltersAndShowAll('Query Store')">
+            <div class="summary-card" onclick="selectAllFiltersAndShowAll('Query Store')" oncontextmenu="return markSummarySelected(event, this, 'Query Store')">
                 <div class="summary-header">
                     <h3>Query Store</h3>
+                    <span class="check-badge">✓</span>
                     <span class="total-count">$($global:ComparisonData.QueryStore.Matches.Count + $global:ComparisonData.QueryStore.SourceOnly.Count + $global:ComparisonData.QueryStore.TargetOnly.Count + $global:ComparisonData.QueryStore.Differences.Count) total</span>
                 </div>
                 <div class="summary-breakdown">
@@ -3038,46 +3115,6 @@ function New-HTMLReport {
     
     $html += @"
     <script>
-        
-        // Export to Excel functionality
-        function exportToExcel() {
-            const table = document.createElement('table');
-            const thead = document.createElement('thead');
-            const tbody = document.createElement('tbody');
-            
-            // Add headers
-            const headerRow = document.createElement('tr');
-            headerRow.innerHTML = '<th>Section</th><th>Object Name</th><th>Status</th><th>Details</th>';
-            thead.appendChild(headerRow);
-            table.appendChild(thead);
-            
-            // Add data rows
-            const sections = document.querySelectorAll('.section');
-            sections.forEach(section => {
-                const sectionName = section.querySelector('h2').textContent;
-                const rows = section.querySelectorAll('tbody tr');
-                
-                rows.forEach(row => {
-                    const newRow = document.createElement('tr');
-                    const cells = row.querySelectorAll('td');
-                    
-                    if (cells.length > 0) {
-                        newRow.innerHTML = 
-                            '<td>' + sectionName + '</td>' +
-                            '<td>' + (cells[0] ? cells[0].textContent : '') + '</td>' +
-                            '<td>' + (row.className.includes('match') ? 'Match' : row.className.includes('mismatch') ? 'Mismatch' : row.className.includes('source-only') ? 'Source Only' : 'Target Only') + '</td>' +
-                            '<td>' + Array.from(cells).slice(1).map(cell => cell.textContent).join(' | ') + '</td>';
-                        tbody.appendChild(newRow);
-                    }
-                });
-            });
-            
-            table.appendChild(tbody);
-            
-            // Convert to Excel
-            const wb = XLSX.utils.table_to_book(table);
-            XLSX.writeFile(wb, 'DatabaseSchemaComparison.xlsx');
-        }
         // Enhanced filter functionality
         function applyFilters(sectionId) {
             const filterInput = document.getElementById('filter-' + sectionId);
@@ -3133,7 +3170,6 @@ function New-HTMLReport {
             
             applyFilters(sectionId);
         }
-        
         function sortTable(sectionId) {
             const sortSelect = document.getElementById('sort-' + sectionId);
             const sortValue = sortSelect.value;
@@ -3205,6 +3241,79 @@ function New-HTMLReport {
             
             // Setup filters
             setupFilters();
+
+            // Map section id -> summary card for quick lookup
+            const sectionIdToCard = (() => {
+                const map = {};
+                const cards = document.querySelectorAll('#summaryCards .summary-card');
+                cards.forEach(card => {
+                    const h = card.querySelector('h3');
+                    if(!h) return;
+                    const key = h.textContent.trim().toLowerCase().replace(/\s+/g,'-');
+                    map[key] = card;
+                });
+                return map;
+            })();
+            function getSummaryCardBySectionId(sectionId){
+                const id = (sectionId||'').toString().toLowerCase().replace(/\s+/g,'-');
+                return sectionIdToCard[id] || null;
+            }
+
+            // Helper: expand a section without scrolling
+            function expandSectionNoScroll(sectionId){
+                const sec = (sectionId||'').toString();
+                const normalized = sec.toLowerCase().replace(/\s+/g,'-');
+                const content = document.getElementById(normalized + '-content');
+                const header = document.getElementById(normalized + '-header');
+                const toggle = header ? header.querySelector('.toggle') : null;
+                if (content && !content.classList.contains('expanded')) {
+                    content.classList.add('expanded');
+                    content.style.maxHeight = '5000px';
+                    content.style.opacity = '1';
+                    if (toggle) toggle.textContent = '[-]';
+                }
+            }
+
+            function collapseSectionNoScroll(sectionId){
+                const sec = (sectionId||'').toString();
+                const normalized = sec.toLowerCase().replace(/\s+/g,'-');
+                const content = document.getElementById(normalized + '-content');
+                const header = document.getElementById(normalized + '-header');
+                const toggle = header ? header.querySelector('.toggle') : null;
+                if (content && content.classList.contains('expanded')) {
+                    content.classList.remove('expanded');
+                    content.style.maxHeight = '0';
+                    content.style.opacity = '0';
+                    if (toggle) toggle.textContent = '[+]';
+                    // When a section is collapsed, unselect corresponding summary card
+                    const card = getSummaryCardBySectionId(sectionId);
+                    if(card) card.classList.remove('selected');
+                }
+            }
+
+            // Right-click to select a summary card and expand corresponding section (no scroll)
+            window.markSummarySelected = function(event, cardEl, sectionId){
+                // Only handle right-click (button 2) or context menu
+                if (event.button !== 2 && event.type !== 'contextmenu') {
+                    return true; // Allow normal left-click behavior
+                }
+                event.preventDefault();
+                event.stopPropagation();
+                try{
+                    // Toggle selection on right-click
+                    if (cardEl.classList.contains('selected')) {
+                        cardEl.classList.remove('selected');
+                        // Collapse corresponding section without scrolling
+                        collapseSectionNoScroll(sectionId);
+                    } else {
+                        // Multi-select: do NOT clear previous selections
+                        cardEl.classList.add('selected');
+                        // Expand corresponding section without scrolling
+                        expandSectionNoScroll(sectionId);
+                    }
+                }catch(e){ console.error('markSummarySelected error', e); }
+                return false;
+            }
             
             // Summary counts are already set in the HTML template
             // Sorting for summary cards (FLIP)
@@ -4672,17 +4781,77 @@ function New-HTMLReport {
             const content = document.getElementById(sectionId + '-content');
             const toggle = document.getElementById(sectionId + '-header').querySelector('.toggle');
             
+            if (!content || !toggle) {
+                console.error('Could not find content or toggle for section:', sectionId);
+                return;
+            }
+            
             if (content.classList.contains('expanded')) {
                 content.classList.remove('expanded');
                 content.style.maxHeight = '0';
                 content.style.opacity = '0';
                 toggle.textContent = '[+]';
+                // Unselect matching summary card without relying on inner-scope helpers
+                const cards = document.querySelectorAll('#summaryCards .summary-card');
+                const idNorm = (sectionId||'').toString().toLowerCase().replace(/\s+/g,'-');
+                cards.forEach(card => {
+                    const h = card.querySelector('h3');
+                    if(!h) return;
+                    const norm = h.textContent.trim().toLowerCase().replace(/\s+/g,'-');
+                    if(norm === idNorm) card.classList.remove('selected');
+                });
             } else {
                 content.classList.add('expanded');
                 content.style.maxHeight = '5000px';
                 content.style.opacity = '1';
                 toggle.textContent = '[-]';
             }
+        }
+        
+        // Toggle all sections with a single floating button
+        function toggleAllSections() {
+            const sections = document.querySelectorAll('.section');
+            const btn = document.getElementById('toggleAllBtn');
+            if (!sections || sections.length === 0 || !btn) return;
+            
+            // Expand if any section is collapsed
+            const anyCollapsed = Array.from(sections).some(sec => {
+                const content = sec.querySelector('.section-content');
+                return content && !content.classList.contains('expanded');
+            });
+            
+            sections.forEach(sec => {
+                const headerDiv = sec.querySelector('.section-header');
+                const content = sec.querySelector('.section-content');
+                const toggle = headerDiv ? headerDiv.querySelector('.toggle') : null;
+                if (!headerDiv || !content || !toggle) return;
+                
+                if (anyCollapsed) {
+                    // expand
+                    content.classList.add('expanded');
+                    content.style.maxHeight = '5000px';
+                    content.style.opacity = '1';
+                    toggle.textContent = '[-]';
+                } else {
+                    // collapse
+                    content.classList.remove('expanded');
+                    content.style.maxHeight = '0';
+                    content.style.opacity = '0';
+                    toggle.textContent = '[+]';
+                    // Unselect corresponding summary card (no helper dependency)
+                    const secId = (headerDiv.id||'').replace(/-header$/,'');
+                    const idNorm = (secId||'').toString().toLowerCase().replace(/\s+/g,'-');
+                    const cards = document.querySelectorAll('#summaryCards .summary-card');
+                    cards.forEach(card => {
+                        const h = card.querySelector('h3');
+                        if(!h) return;
+                        const norm = h.textContent.trim().toLowerCase().replace(/\s+/g,'-');
+                        if(norm === idNorm) card.classList.remove('selected');
+                    });
+                }
+            });
+            
+            btn.textContent = anyCollapsed ? 'Collapse All' : 'Expand All';
         }
         
         // Function to navigate to section (without auto-expanding)
@@ -4801,15 +4970,419 @@ function New-HTMLReport {
         });
     </script>
     
-    <!-- Include SheetJS for Excel export -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- Include JSZip (dependency for ExcelJS in browsers) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Include ExcelJS for Excel export with styling support -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <!-- Include jsPDF for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script>
+        // Wait for ExcelJS library to load
+        function waitForExcelJS(callback) {
+            if (typeof ExcelJS !== 'undefined') {
+                callback();
+            } else {
+                setTimeout(() => waitForExcelJS(callback), 100);
+            }
+        }
+        
+        // Export to Excel functionality - only expanded sections with ExcelJS
+        function exportToExcel() {
+            console.log('Starting Excel export...');
+            
+            waitForExcelJS(() => {
+                console.log('ExcelJS library loaded successfully');
+                
+                const sections = document.querySelectorAll('.section');
+                let hasExpandedSections = false;
+                
+                // Create a new workbook
+                const workbook = new ExcelJS.Workbook();
+                
+                // Create Summary sheet first
+                const summarySheet = workbook.addWorksheet('Summary');
+                
+                // Get summary card data - ONLY include expanded sections
+                const summaryCards = document.querySelectorAll('.summary-card');
+                const summaryData = [
+                    ['Category', 'Matches', 'Source Only', 'Target Only', 'Differences']
+                ];
+                
+                // Build set of currently expanded section titles from the real sections
+                const expandedSectionTitles = new Set(
+                    Array.from(document.querySelectorAll('.section')).map(sec => {
+                        const title = (sec.querySelector('h2')?.textContent || '').trim();
+                        const content = sec.querySelector('.section-content');
+                        return content && content.classList.contains('expanded') ? title : null;
+                    }).filter(Boolean)
+                );
+                
+                summaryCards.forEach(card => {
+                    const title = (card.querySelector('h3')?.textContent || '').trim();
+                    if (!expandedSectionTitles.has(title)) return; // skip collapsed
+                    // Fallback: our cards render four '.count' spans in order: Match, Source Only, Target Only, Differences
+                    const counts = Array.from(card.querySelectorAll('.count')).map(el => (el.textContent || '0').trim());
+                    if (counts.length >= 4) {
+                        const matchCount = parseInt(counts[0], 10) || 0;
+                        const sourceOnlyCount = parseInt(counts[1], 10) || 0;
+                        const targetOnlyCount = parseInt(counts[2], 10) || 0;
+                        const differenceCount = parseInt(counts[3], 10) || 0;
+                        summaryData.push([title, matchCount, sourceOnlyCount, targetOnlyCount, differenceCount]);
+                    }
+                });
+                
+                // Add summary data to worksheet
+                summaryData.forEach((rowData, rowIndex) => {
+                    const row = summarySheet.addRow(rowData);
+                    
+                    // Style header row
+                    if (rowIndex === 0) {
+                        row.eachCell((cell, colNumber) => {
+                            cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+                            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                            cell.border = {
+                                top: { style: 'thin', color: { argb: 'FF000000' } },
+                                left: { style: 'thin', color: { argb: 'FF000000' } },
+                                bottom: { style: 'thin', color: { argb: 'FF000000' } },
+                                right: { style: 'thin', color: { argb: 'FF000000' } }
+                            };
+                        });
+                    } else {
+                        // Style data rows with explicit column colors
+                        row.eachCell((cell, colNumber) => {
+                            // Set borders first
+                            cell.border = {
+                                top: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+                                left: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+                                bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+                                right: { style: 'thin', color: { argb: 'FFD0D0D0' } }
+                            };
+                            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                            
+                            // Apply specific colors for each column (ExcelJS uses 1-based indexing)
+                            switch (colNumber) {
+                                case 1: // Category - White
+                                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+                                    cell.font = { color: { argb: 'FF000000' } };
+                                    break;
+                                case 2: // Matches - Green
+                                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD5E8D4' } };
+                                    cell.font = { color: { argb: 'FF2F5233' } };
+                                    break;
+                                case 3: // Source Only - Yellow
+                                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
+                                    cell.font = { color: { argb: 'FF856404' } };
+                                    break;
+                                case 4: // Target Only - Blue
+                                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1ECF1' } };
+                                    cell.font = { color: { argb: 'FF0C5460' } };
+                                    break;
+                                case 5: // Differences - Red
+                                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8D7DA' } };
+                                    cell.font = { color: { argb: 'FF721C24' } };
+                                    break;
+                                default:
+                                    // Default white for any other columns
+                                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+                                    cell.font = { color: { argb: 'FF000000' } };
+                            }
+                        });
+                    }
+                });
+                
+                // Set column widths for summary sheet
+                summarySheet.columns = [
+                    { width: 25 }, // Category
+                    { width: 15 }, // Matches
+                    { width: 15 }, // Source Only
+                    { width: 15 }, // Target Only
+                    { width: 15 }  // Differences
+                ];
+                
+                // Add auto-filter to summary sheet
+                if (summaryData.length > 0) {
+                    summarySheet.autoFilter = {
+                        from: { row: 1, column: 1 },
+                        to: { row: 1, column: 5 }
+                    };
+                }
+                
+                sections.forEach(section => {
+                    const content = section.querySelector('.section-content');
+                    const sectionName = section.querySelector('h2').textContent;
+                    
+                    // Only process expanded sections
+                    if (content && content.classList.contains('expanded')) {
+                        hasExpandedSections = true;
+                        const table = section.querySelector('table');
+                    
+                        if (table) {
+                            console.log('Processing table for section:', sectionName);
+                            
+                            // Create a new worksheet
+                            const worksheet = workbook.addWorksheet(sectionName.substring(0, 31));
+                        
+                            // Get table data
+                            const rows = table.querySelectorAll('tr');
+                            const data = [];
+                            
+                            console.log('Found', rows.length, 'rows in table');
+                            
+                            rows.forEach((row, rowIndex) => {
+                                const cells = row.querySelectorAll('td, th');
+                                const rowData = [];
+                                
+                                cells.forEach((cell, cellIndex) => {
+                                    // Clone cell and strip interactive elements like "View Code" buttons before extracting text
+                                    const temp = cell.cloneNode(true);
+                                    try {
+                                        temp.querySelectorAll('button, .view-code-btn, .toggle, .filters, .floating-btn').forEach(el => el.remove());
+                                    } catch (e) { /* no-op */ }
+                                    let text = (temp.textContent || cell.textContent || '').replace(/\s+/g, ' ').trim();
+                                    // Extra safety: remove any leftover 'View Code' text
+                                    text = text.replace(/\bView Code\b/gi, '').trim();
+                                    // Ensure we have a valid string, not empty or undefined
+                                    rowData.push(text || '');
+                                });
+                                
+                                // Only add rows that have data
+                                if (rowData.length > 0) {
+                                    data.push(rowData);
+                                    console.log('Added row', rowIndex, 'with', rowData.length, 'cells');
+                                }
+                            });
+                            
+                            console.log('Total data rows:', data.length);
+                        
+                            // Add data to worksheet
+                            data.forEach((rowData, rowIndex) => {
+                                try {
+                                    // Ensure rowData is valid and not empty
+                                    if (rowData && rowData.length > 0) {
+                                        console.log('Adding row', rowIndex, ':', rowData);
+                                        const row = worksheet.addRow(rowData);
+                                
+                                        // Style header row
+                                        if (rowIndex === 0) {
+                                            row.eachCell((cell, colNumber) => {
+                                                cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                                                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+                                                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                                                cell.border = {
+                                                    top: { style: 'thin', color: { argb: 'FF000000' } },
+                                                    left: { style: 'thin', color: { argb: 'FF000000' } },
+                                                    bottom: { style: 'thin', color: { argb: 'FF000000' } },
+                                                    right: { style: 'thin', color: { argb: 'FF000000' } }
+                                                };
+                                            });
+                                        } else {
+                                            // Style data rows
+                                            row.eachCell((cell, colNumber) => {
+                                                const cellValue = cell.value || '';
+                                                const status = cellValue.toString().toLowerCase();
+                                                
+                                                // Default styling
+                                                cell.border = {
+                                                    top: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+                                                    left: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+                                                    bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+                                                    right: { style: 'thin', color: { argb: 'FFD0D0D0' } }
+                                                };
+                                                cell.alignment = { vertical: 'top', wrapText: true };
+                                                
+                                                // Color code based on status (Status column is typically column 2)
+                                                if (colNumber === 2) {
+                                                    if (status.includes('match')) {
+                                                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD5E8D4' } };
+                                                        cell.font = { color: { argb: 'FF2F5233' } };
+                                                    } else if (status.includes('mismatch') || status.includes('difference')) {
+                                                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8D7DA' } };
+                                                        cell.font = { color: { argb: 'FF721C24' } };
+                                                    } else if (status.includes('source only')) {
+                                                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } };
+                                                        cell.font = { color: { argb: 'FF856404' } };
+                                                    } else if (status.includes('target only')) {
+                                                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1ECF1' } };
+                                                        cell.font = { color: { argb: 'FF0C5460' } };
+                                                    }
+                                                } else if (colNumber === 1) {
+                                                    // Object Name column - make bold
+                                                    cell.font = { bold: true };
+                                                }
+                                                
+                                                // Alternating row colors
+                                                if (rowIndex % 2 === 0) {
+                                                    if (!cell.fill || cell.fill.type === 'none') {
+                                                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8F9FA' } };
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.error('Error processing row', rowIndex, ':', error);
+                                    console.error('Row data:', rowData);
+                                }
+                            });
+                        
+                            // Set column widths
+                            worksheet.columns = [
+                                { width: 30 }, // Object Name
+                                { width: 15 }, // Status
+                                { width: 25 }, // Source Value
+                                { width: 25 }  // Target Value
+                            ];
+                            
+                            // Add auto-filter on header row using a valid ExcelJS range
+                            const totalColumns = worksheet.columnCount || (data.length > 0 ? data[0].length : 0);
+                            if (totalColumns > 0) {
+                                worksheet.autoFilter = {
+                                    from: { row: 1, column: 1 },
+                                    to: { row: 1, column: totalColumns }
+                                };
+                            }
+                        }
+                    }
+                });
+                
+                if (!hasExpandedSections) {
+                    alert('No expanded sections found. Please expand at least one section before exporting to Excel.');
+                    return;
+                }
+                
+                // Save the workbook
+                workbook.xlsx.writeBuffer().then(buffer => {
+                    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'DatabaseSchemaComparison.xlsx';
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    console.log('Excel export completed successfully');
+                }).catch(error => {
+                    console.error('Error creating Excel file:', error);
+                    alert('Error creating Excel file. Please try again.');
+                });
+            });
+        }
+        
+        // Export to PDF functionality - generate PDF directly with fallback
+        function exportToPDF() {
+            console.log('Starting PDF export...');
+            
+            // Check if jsPDF library is loaded
+            if (typeof window.jspdf === 'undefined') {
+                alert('PDF library not loaded. Please wait a moment and try again.');
+                console.error('jsPDF library not available');
+                return;
+            }
+            
+            // Expand all sections for PDF export
+            document.querySelectorAll('.section-content').forEach(content => {
+                content.classList.add('expanded');
+                content.style.maxHeight = 'none'; // Allow content to expand fully
+                content.style.opacity = '1';
+                const toggle = content.previousElementSibling.querySelector('.toggle');
+                if (toggle) toggle.textContent = '[-]';
+            });
+
+            // Apply PDF-specific styles
+            const style = document.createElement('style');
+            style.textContent = 'body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }' +
+                '.header-controls, .filter-container, .view-code-btn, .toggle, .export-buttons { display: none !important; }' +
+                '.section-content { max-height: none !important; opacity: 1 !important; }' +
+                '.comparison-table { width: 100%; border-collapse: collapse; }' +
+                '.comparison-table th, .comparison-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }' +
+                '.status-badge { padding: 2px 6px; border-radius: 4px; font-size: 0.8em; white-space: nowrap; }' +
+                '.status-mismatch { background-color: #dc3545; color: white; }' +
+                '.status-match { background-color: #28a745; color: white; }' +
+                '.status-source-only { background-color: #ffc107; color: #343a40; }' +
+                '.status-target-only { background-color: #17a2b8; color: white; }' +
+                '.db-badge { background-color: #6c757d; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; white-space: nowrap; }' +
+                '.db-source { background-color: #007bff; }' +
+                '.db-target { background-color: #6f42c1; }' +
+                '.code-diff-add { background-color: #e6ffed; }' +
+                '.code-diff-remove { background-color: #ffeef0; }' +
+                '.code-diff-change { background-color: #fff3cd; }' +
+                'pre { white-space: pre-wrap; word-wrap: break-word; }';
+            document.head.appendChild(style);
+
+            // Wait a moment for styles to apply, then generate PDF
+            setTimeout(() => {
+                // Get the main content area
+                const element = document.querySelector('.container') || document.body;
+                
+                // Use html2canvas to capture the content
+                if (typeof html2canvas !== 'undefined') {
+                    html2canvas(element, {
+                        scale: 1.5, // Reduced scale to prevent memory issues
+                        useCORS: true,
+                        allowTaint: true,
+                        backgroundColor: '#ffffff',
+                        logging: false,
+                        height: element.scrollHeight,
+                        width: element.scrollWidth
+                    }).then(canvas => {
+                        try {
+                            const imgData = canvas.toDataURL('image/jpeg', 0.8); // Use JPEG with compression
+                            const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4');
+                            
+                            // Calculate dimensions
+                            const imgWidth = 210; // A4 width in mm
+                            const pageHeight = 295; // A4 height in mm
+                            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+                            
+                            // If content is too large, split into multiple pages
+                            if (imgHeight > pageHeight) {
+                                const totalPages = Math.ceil(imgHeight / pageHeight);
+                                
+                                for (let i = 0; i < totalPages; i++) {
+                                    if (i > 0) pdf.addPage();
+                                    
+                                    const yOffset = -i * pageHeight;
+                                    pdf.addImage(imgData, 'JPEG', 0, yOffset, imgWidth, imgHeight);
+                                }
+                            } else {
+                                pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
+                            }
+                            
+                            // Save the PDF
+                            pdf.save('DatabaseSchemaComparison.pdf');
+                            console.log('PDF export completed successfully');
+                            
+                        } catch (error) {
+                            console.error('Error creating PDF:', error);
+                            // Fallback to print dialog if PDF generation fails
+                            console.log('Falling back to print dialog...');
+                            window.print();
+                        }
+                        
+                        // Clean up
+                        document.head.removeChild(style);
+                    }).catch(error => {
+                        console.error('Error capturing content:', error);
+                        alert('Error generating PDF. Falling back to print dialog.');
+                        window.print();
+                        document.head.removeChild(style);
+                    });
+                } else {
+                    console.error('html2canvas library not available');
+                    alert('PDF generation library not loaded. Falling back to print dialog.');
+                    window.print();
+                    document.head.removeChild(style);
+                }
+            }, 500); // Give time for styles to apply
+        }
+    </script>
 </body>
 </html>
 "@
     
     return $html
 }
-
 # Function to create section HTML
 function New-SectionHTML {
     param(
@@ -4972,10 +5545,22 @@ function New-SectionHTML {
                     $details = "Data type definition differences detected $viewDetailsBtn"
                 } elseif ($SectionName -eq "Constraints") {
                     $objectName = "$($item.Source.SCHEMA_NAME).$($item.Source.TABLE_NAME).$($item.Source.CONSTRAINT_NAME)"
+                    $diffDetails = @()
+                    if ($item.Differences) {
+                        foreach ($diffKey in $item.Differences.Keys) {
+                            $sourceVal = $item.Differences[$diffKey].Source
+                            $targetVal = $item.Differences[$diffKey].Target
+                            $diffDetails += "$diffKey`: $sourceVal <span class='db-badge db-source'>$SourceDatabaseName</span> -> $targetVal <span class='db-badge db-target'>$TargetDatabaseName</span>"
+                        }
+                    }
                     $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
                     $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-table='$($item.Source.TABLE_NAME)' data-constraint='$($item.Source.CONSTRAINT_NAME)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-type='$($item.Source.CONSTRAINT_TYPE)' data-target-type='$($item.Target.CONSTRAINT_TYPE)' data-source-disabled='$($item.Source.is_disabled)' data-target-disabled='$($item.Target.is_disabled)' onclick='showConstraintCode(this)'>View Code</button>"
-                    $details = "Constraint definition differences detected $viewCodeBtn"
+                    if ($diffDetails.Count -gt 0) {
+                        $details = ($diffDetails -join "; ") + " $viewCodeBtn"
+                    } else {
+                        $details = "Constraint definition differences detected $viewCodeBtn"
+                    }
                 } elseif ($SectionName -eq "Views") {
                     $objectName = "$($item.Source.SCHEMA_NAME).$($item.Source.VIEW_NAME)"
                     $sourceCode = [System.Web.HttpUtility]::HtmlEncode($item.Source.definition)
@@ -5002,10 +5587,22 @@ function New-SectionHTML {
                     $details = "Database trigger definition differences detected $viewCodeBtn"
                 } elseif ($SectionName -eq "Keys") {
                     $objectName = "$($item.Source.SCHEMA_NAME).$($item.Source.TABLE_NAME).$($item.Source.KEY_NAME)"
+                    $diffDetails = @()
+                    if ($item.Differences) {
+                        foreach ($diffKey in $item.Differences.Keys) {
+                            $sourceVal = $item.Differences[$diffKey].Source
+                            $targetVal = $item.Differences[$diffKey].Target
+                            $diffDetails += "$diffKey`: $sourceVal <span class='db-badge db-source'>$SourceDatabaseName</span> -> $targetVal <span class='db-badge db-target'>$TargetDatabaseName</span>"
+                        }
+                    }
                     $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
                     $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-table='$($item.Source.TABLE_NAME)' data-key='$($item.Source.KEY_NAME)' data-source-code='$sourceCreateStatement' data-target-code='$targetCreateStatement' data-source-key-type='$($item.Source.KEY_TYPE)' data-target-key-type='$($item.Target.KEY_TYPE)' data-source-is-primary='$($item.Source.is_primary_key)' data-target-is-primary='$($item.Target.is_primary_key)' data-source-is-unique='$($item.Source.is_unique)' data-target-is-unique='$($item.Target.is_unique)' onclick='showKeyCode(this)'>View Code</button>"
-                    $details = "Key definition differences detected $viewCodeBtn"
+                    if ($diffDetails.Count -gt 0) {
+                        $details = ($diffDetails -join "; ") + " $viewCodeBtn"
+                    } else {
+                        $details = "Key definition differences detected $viewCodeBtn"
+                    }
                 } elseif ($SectionName -eq "Database Options") {
                     # Handle custom structure for database options
                     if ($item.Source -and $item.Target) {
@@ -5263,30 +5860,6 @@ function New-SectionHTML {
                     } else {
                         $details = "Query Store item present in source only"
                     }
-                # Old Query Store section removed - handled by new structure above
-                } elseif ($SectionName -eq "Query Store") {
-                    $qt = $item["SHORT_QUERY_TEXT"]
-                    if ($qt) {
-                        $objectName = $qt
-                    } else {
-                        $qtFull = $item["QUERY_TEXT"]
-                        if ($qtFull) {
-                            if ($qtFull.Length -gt 255) { $objectName = $qtFull.Substring(0,255) + '...' } else { $objectName = $qtFull }
-                        } else {
-                            $objectName = "QueryId=$($item["QUERY_ID"]), PlanId=$($item["PLAN_ID"])"
-                        }
-                    }
-                    $full = [System.Web.HttpUtility]::HtmlEncode($item["QUERY_TEXT"])
-                    $viewCodeBtn = "<button class='view-code-btn' data-schema='' data-function='QueryStore' data-source-code='' data-target-code='$full' onclick='showFunctionCodeFromData(this)'>View Code</button>"
-                    $details = "Forced plan present in target $viewCodeBtn"
-                } elseif ($SectionName -eq "Query Store") {
-                    $qt = $item["QUERY_TEXT"]
-                    if ($qt) {
-                        if ($qt.Length -gt 255) { $objectName = $qt.Substring(0,255) + '...' } else { $objectName = $qt }
-                    } else {
-                        $objectName = "QueryId=$($item.QUERY_ID), PlanId=$($item.PLAN_ID)"
-                    }
-                    $details = "Forced plan present in source"
                 } elseif ($SectionName -eq "Users") {
                     $objectName = $item.USER_NAME
                     $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
@@ -5726,7 +6299,6 @@ try {
 if ($sourceQueryStore) {
     if ($sourceQueryStore.GetType().Name -eq "DataTable" -and $sourceQueryStore.Rows.Count -gt 0) {
         $configRow = $sourceQueryStore.Rows | Where-Object { $_.ITEM_TYPE -eq 'QS_CONFIG' } | Select-Object -First 1
-        $forcedPlans = $sourceQueryStore.Rows | Where-Object { $_.ITEM_TYPE -eq 'QS_FORCED_PLAN' }
         if ($configRow) {
             Write-Host "Source Query Store: $($configRow.QS_STATUS) - State: $($configRow.ACTUAL_STATE) (Items: $($sourceQueryStore.Rows.Count))" -ForegroundColor Magenta
         } else {
@@ -5734,7 +6306,6 @@ if ($sourceQueryStore) {
         }
     } elseif ($sourceQueryStore.GetType().Name -eq "Object[]" -and $sourceQueryStore.Count -gt 0) {
         $configRow = $sourceQueryStore | Where-Object { $_.ITEM_TYPE -eq 'QS_CONFIG' } | Select-Object -First 1
-        $forcedPlans = $sourceQueryStore | Where-Object { $_.ITEM_TYPE -eq 'QS_FORCED_PLAN' }
         if ($configRow) {
             Write-Host "Source Query Store: $($configRow.QS_STATUS) - State: $($configRow.ACTUAL_STATE) (Items: $($sourceQueryStore.Count))" -ForegroundColor Magenta
         } else {
@@ -5748,7 +6319,6 @@ if ($sourceQueryStore) {
 if ($targetQueryStore) {
     if ($targetQueryStore.GetType().Name -eq "DataTable" -and $targetQueryStore.Rows.Count -gt 0) {
         $configRow = $targetQueryStore.Rows | Where-Object { $_.ITEM_TYPE -eq 'QS_CONFIG' } | Select-Object -First 1
-        $forcedPlans = $targetQueryStore.Rows | Where-Object { $_.ITEM_TYPE -eq 'QS_FORCED_PLAN' }
         if ($configRow) {
             Write-Host "Target Query Store: $($configRow.QS_STATUS) - State: $($configRow.ACTUAL_STATE) (Items: $($targetQueryStore.Rows.Count))" -ForegroundColor Magenta
     } else {
@@ -5756,7 +6326,6 @@ if ($targetQueryStore) {
         }
     } elseif ($targetQueryStore.GetType().Name -eq "Object[]" -and $targetQueryStore.Count -gt 0) {
         $configRow = $targetQueryStore | Where-Object { $_.ITEM_TYPE -eq 'QS_CONFIG' } | Select-Object -First 1
-        $forcedPlans = $targetQueryStore | Where-Object { $_.ITEM_TYPE -eq 'QS_FORCED_PLAN' }
         if ($configRow) {
             Write-Host "Target Query Store: $($configRow.QS_STATUS) - State: $($configRow.ACTUAL_STATE) (Items: $($targetQueryStore.Count))" -ForegroundColor Magenta
         } else {
@@ -5800,7 +6369,6 @@ try {
     Write-Host "Error collecting source keys: $($_.Exception.Message)" -ForegroundColor Red
     $sourceKeys = $null
 }
-
 Write-Host "Collecting keys from target database..." -ForegroundColor Yellow
 try {
     $targetKeys = Get-KeyInfo -Server $TargetServer -Database $TargetDatabase
@@ -6490,9 +7058,6 @@ if ($sourceKeys -or $targetKeys) {
         Differences = @()
     }
 }
-
-
-
 # Compare VLF counts
 Write-Host "Comparing VLF counts..." -ForegroundColor Yellow
 

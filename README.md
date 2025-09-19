@@ -190,11 +190,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-GUI.ps1
 
 The graphical interface provides an intuitive way to configure and run database comparisons:
 
-**Main Interface:**
+**Main Interface (modernized):**
 - **Scenario Dropdown** - Select from pre-configured scenarios in `config.json`
-- **Source/Target Configuration** - Enter server names and database names
-- **Authentication Setup** - Configure different auth types for source and target
-- **Connection Testing** - Test individual or both connections before running
+- **Source/Target Panels** - Clean Segoe UI styling, larger layout
+- **Authentication Setup** - Configure different auth types per side
+- **Connection Testing**
+  - Test Source / Test Target / Test Both
+  - Full error details shown in a multi-line panel (no truncation)
+  - Status line lists source/target failures when present
 - **Smart Button States** - Run button enables when both connections are successful
 - **One-Click Execution** - Run drift detection with current settings
 
@@ -265,10 +268,13 @@ Note: You can use different authentication types for source and target servers, 
 - Run comparisons during maintenance windows for large databases
 
 ### Outputs
-- `SchemaComparisonReport.html`: Interactive, categorized drift report with "View Code" buttons
-- **Query Store Analysis**: Shows actual SQL query text for forced plans, not just Query IDs
+- `SchemaComparisonReport.html`: Interactive, categorized drift report
+- **Query Store Analysis**: Actual SQL query text for forced plans
 - **Detailed Comparisons**: Configuration differences, object-level changes, and performance insights
-- **Interactive Features**: Filter by status, search functionality, and expandable code views
+- **Interactive Features**:
+  - Filter by status, search, expandable code views
+  - Header buttons: "Sort A–Z" and "Sort by Category"
+  - Smooth animations: cards move from old to new positions; sections reorder to match selection
 
 ### Troubleshooting
 
@@ -298,7 +304,7 @@ Note: You can use different authentication types for source and target servers, 
 
 ### Project Structure
 - `DatabaseSchemaDriftDetection.ps1` — main PowerShell script
-- `DatabaseConfigGUI.ps1` — Windows Forms GUI application
+- `DatabaseConfigGUI.ps1` — Windows Forms GUI application (modern styling, detailed connection errors)
 - `Launch-GUI.ps1` — simple launcher for the GUI
 - `Test-GUI.ps1` — test script to verify GUI functionality
 - `config.json` — comparison configuration
