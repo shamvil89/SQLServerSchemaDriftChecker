@@ -220,7 +220,7 @@ function Invoke-SqlQuery {
             $connectionString = "Server=$Server;Database=$Database;Authentication=Active Directory Integrated;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
         } else {
             # Default to Trusted Connection (Windows Auth)
-            $connectionString = "Server=$Server;Database=$Database;Integrated Security=true;TrustServerCertificate=true;"
+        $connectionString = "Server=$Server;Database=$Database;Integrated Security=true;TrustServerCertificate=true;"
         }
         
         $connection = New-Object System.Data.SqlClient.SqlConnection($connectionString)
@@ -1646,6 +1646,23 @@ function New-HTMLReport {
             font-size: 1.2em;
             opacity: 0.9;
         }
+        .header-controls {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .sort-btn {
+            background: rgba(255,255,255,0.15);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.35);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.1s ease;
+        }
+        .sort-btn:hover { background: rgba(255,255,255,0.25); }
+        .sort-btn:active { transform: scale(0.98); }
         
         .summary {
             background: white;
@@ -1663,10 +1680,12 @@ function New-HTMLReport {
         }
         
         .summary-cards {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
+            display: flex;
+            flex-wrap: wrap;
             gap: 25px;
             margin-top: 20px;
+            position: relative; /* helps FLIP look stable */
+            /* removed contain to avoid brief paint glitches during animations */
         }
         
         .summary-card {
@@ -1678,6 +1697,10 @@ function New-HTMLReport {
             transition: transform 0.2s ease;
             cursor: pointer;
             min-height: 200px;
+            flex: 0 0 calc((100% - (25px * 4)) / 5);
+            box-sizing: border-box;
+            will-change: transform;
+            backface-visibility: hidden;
         }
         
         .summary-card:hover {
@@ -2469,10 +2492,14 @@ function New-HTMLReport {
         <h1>Database Schema Drift Detection Report</h1>
         <p>Source: $SourceServer.$SourceDatabase | Target: $TargetServer.$TargetDatabase</p>
         <p>Generated on: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")</p>
+        <div class="header-controls">
+            <button id="sort-alpha-btn" class="sort-btn" title="Arrange cards alphabetically" onclick="window.sortAlphaAndSections && window.sortAlphaAndSections()">Sort A–Z</button>
+            <button id="sort-category-btn" class="sort-btn" title="Arrange cards by category" onclick="window.sortCategoryAndSections && window.sortCategoryAndSections()">Sort by Category</button>
+        </div>
     </div>
     <div class="summary">
         <h2>Schema Drift Summary</h2>
-        <div class="summary-cards">
+        <div id="summaryCards" class="summary-cards">
             <div class="summary-card" onclick="selectAllFiltersAndShowAll('Schemas')">
                 <div class="summary-header">
                     <h3>Schemas</h3>
@@ -3007,7 +3034,7 @@ function New-HTMLReport {
     }
     
     # Combine all sections
-    $html += ($sectionsHtml -join "")
+    $html += "<div id=`"sectionsContainer`">" + (($sectionsHtml -join "")) + "</div>"
     
     $html += @"
     <script>
@@ -3180,6 +3207,140 @@ function New-HTMLReport {
             setupFilters();
             
             // Summary counts are already set in the HTML template
+            // Sorting for summary cards (FLIP)
+            const container = document.getElementById('summaryCards');
+            const alphaBtn = document.getElementById('sort-alpha-btn');
+            const categoryBtn = document.getElementById('sort-category-btn');
+            function getCategoryWeight(title){
+                const t=(title||'').toLowerCase();
+                const objects=['schemas','tables','columns','indexes','functions','stored procedures','views','synonyms','constraints','keys','table triggers','database triggers'];
+                const perf=['query store','vlf information'];
+                const config=['database options','file information','users','roles','external resources','data types'];
+                if(objects.some(x=>t.includes(x)))return 1;
+                if(perf.some(x=>t.includes(x)))return 2;
+                if(config.some(x=>t.includes(x)))return 3;
+                return 4;
+            }
+            function animateDirect(parent, newOrder) {
+                const D = 500; // total duration
+                const easing = 'cubic-bezier(0.16, 1, 0.3, 1)'; // ease-out
+                // Freeze container height to avoid wrap jumps
+                const parentHeight = parent.getBoundingClientRect().height;
+                parent.style.height = parentHeight + 'px';
+                // FIRST: capture positions
+                const first = new Map();
+                const children = Array.from(parent.children);
+                children.forEach(el => first.set(el, el.getBoundingClientRect()));
+                // LAST: apply new order with fragment
+                const frag = document.createDocumentFragment();
+                newOrder.forEach(el => frag.appendChild(el));
+                parent.appendChild(frag);
+                const items = Array.from(parent.children);
+                // INVERT
+                items.forEach(el => {
+                    const f = first.get(el);
+                    if (!f) return; // new element
+                    const l = el.getBoundingClientRect();
+                    const dx = f.left - l.left;
+                    const dy = f.top - l.top;
+                    el.style.transition = 'none';
+                    el.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
+                });
+                // Flush
+                void parent.offsetWidth;
+                // PLAY
+                items.forEach(el => {
+                    el.style.transition = 'transform ' + D + 'ms ' + easing;
+                    el.style.transform = 'translate(0, 0)';
+                    el.addEventListener('transitionend', function handler(){
+                        el.style.transition = '';
+                        el.style.transform = '';
+                        el.removeEventListener('transitionend', handler);
+                    }, { once: true });
+                });
+                // Release height after
+                setTimeout(()=>{ parent.style.height = ''; }, D + 30);
+            }
+            window.sortAlphabetical = function(){
+                if(!container) return;
+                const sorted=Array.from(container.querySelectorAll('.summary-card')).sort((a,b)=>{
+                    const at=a.querySelector('.summary-header h3')?.textContent?.toLowerCase()||'';
+                    const bt=b.querySelector('.summary-header h3')?.textContent?.toLowerCase()||'';
+                    return at.localeCompare(bt);
+                });
+                animateDirect(container,sorted);
+            }
+            window.sortByCategory = function(){
+                if(!container) return;
+                const sorted=Array.from(container.querySelectorAll('.summary-card')).sort((a,b)=>{
+                    const at=a.querySelector('.summary-header h3')?.textContent||'';
+                    const bt=b.querySelector('.summary-header h3')?.textContent||'';
+                    const aw=getCategoryWeight(at); const bw=getCategoryWeight(bt);
+                    if(aw!==bw) return aw-bw; return at.toLowerCase().localeCompare(bt.toLowerCase());
+                });
+                animateDirect(container,sorted);
+            }
+            if(alphaBtn) alphaBtn.addEventListener('click', window.sortAlphabetical);
+            if(categoryBtn) categoryBtn.addEventListener('click', window.sortByCategory);
+
+            // Section reordering to match chosen category sort
+            window.reorderSections = function(orderTitles) {
+                const secContainer = document.getElementById('sectionsContainer');
+                if (!secContainer) return;
+                const sections = Array.from(secContainer.children).filter(el => el.classList.contains('section'));
+                const titleMap = new Map();
+                sections.forEach(s => {
+                    const h = s.querySelector('.section-header h2');
+                    if (h) titleMap.set(h.textContent.trim().toLowerCase(), s);
+                });
+                const fragment = document.createDocumentFragment();
+                orderTitles.forEach(t => {
+                    const s = titleMap.get(t.toLowerCase());
+                    if (s) fragment.appendChild(s);
+                });
+                // Append any remaining sections not explicitly ordered
+                sections.forEach(s => { if (!fragment.contains(s)) fragment.appendChild(s); });
+                secContainer.appendChild(fragment);
+            }
+
+            // When sorting by category for cards, also reorder sections to object → performance → configuration
+            const _origSortByCategory = window.sortByCategory;
+            window.sortCategoryAndSections = function(){
+                // Sort summary cards first
+                _origSortByCategory();
+                // Then sort sections by data-category-weight (then A–Z)
+                const box = document.getElementById('sectionsContainer') || document.querySelector('.section')?.parentElement;
+                if (!box) return;
+                const sections = Array.from(box.querySelectorAll(':scope > .section'));
+                if (sections.length === 0) return;
+                sections.sort((a,b)=>{
+                    const aw = +(a.dataset.categoryWeight||99);
+                    const bw = +(b.dataset.categoryWeight||99);
+                    if (aw !== bw) return aw - bw;
+                    const at = a.querySelector('.section-header h2')?.textContent?.toLowerCase()||'';
+                    const bt = b.querySelector('.section-header h2')?.textContent?.toLowerCase()||'';
+                    return at.localeCompare(bt);
+                });
+                const frag = document.createDocumentFragment();
+                sections.forEach(s=>frag.appendChild(s));
+                box.appendChild(frag);
+            }
+            // For A–Z sorting, also alphabetize sections
+            const _origSortAlpha = window.sortAlphabetical;
+            window.sortAlphaAndSections = function(){
+                _origSortAlpha();
+                const secContainer = document.getElementById('sectionsContainer');
+                if (!secContainer) return;
+                const sections = Array.from(secContainer.querySelectorAll('.section'));
+                sections.sort((a,b)=>{
+                    const at=a.querySelector('.section-header h2')?.textContent?.toLowerCase()||'';
+                    const bt=b.querySelector('.section-header h2')?.textContent?.toLowerCase()||'';
+                    return at.localeCompare(bt);
+                });
+                const frag=document.createDocumentFragment();
+                sections.forEach(s=>frag.appendChild(s));
+                secContainer.appendChild(frag);
+            }
         });
         // Function Code Viewer Modal Functions
         function showFunctionCodeFromData(buttonElement) {
@@ -4660,9 +4821,17 @@ function New-SectionHTML {
     )
     
     $sectionId = $SectionName.ToLower().replace(' ', '-')
+    # Category weight for section ordering: 1=objects, 2=performance, 3=configuration, 4=other
+    $categoryMap = @{
+        'Schemas' = 1; 'Tables' = 1; 'Columns' = 1; 'Indexes' = 1; 'Functions' = 1; 'Stored Procedures' = 1; 'Views' = 1; 'Synonyms' = 1; 'Constraints' = 1; 'Keys' = 1; 'Table Triggers' = 1; 'Database Triggers' = 1;
+        'Query Store' = 2; 'VLF Information' = 2;
+        'Database Options' = 3; 'File Information' = 3; 'Users' = 3; 'Roles' = 3; 'External Resources' = 3; 'Data Types' = 3
+    }
+    $categoryWeight = 4
+    if ($categoryMap.ContainsKey($SectionName)) { $categoryWeight = $categoryMap[$SectionName] }
     
     $html = @"
-    <div class="section">
+    <div class="section" data-title="$SectionName" data-category-weight="$categoryWeight">
         <div class="section-header" id="$sectionId-header">
             <h2>$SectionName</h2>
             <span class="toggle" onclick="toggleSection('$sectionId'); event.stopPropagation();">[+]</span>
@@ -5518,9 +5687,9 @@ SELECT
     CAST(1 AS BIGINT) AS MAX_PLANS_PER_QUERY,
     'ON' AS WAIT_STATS_CAPTURE_MODE,
     CAST(qt.query_sql_text AS NVARCHAR(MAX)) AS QUERY_TEXT,
-    qsq.query_id AS QUERY_ID,
-    qsp.plan_id AS PLAN_ID,
-    TRY_CONVERT(XML, qsp.query_plan) AS QUERY_PLAN_XML
+  qsq.query_id AS QUERY_ID,
+  qsp.plan_id AS PLAN_ID,
+  TRY_CONVERT(XML, qsp.query_plan) AS QUERY_PLAN_XML
 FROM sys.query_store_plan AS qsp
 JOIN sys.query_store_query AS qsq ON qsp.query_id = qsq.query_id
 JOIN sys.query_store_query_text AS qt ON qsq.query_text_id = qt.query_text_id
@@ -5534,9 +5703,9 @@ Write-Host "Collecting Query Store information from source..." -ForegroundColor 
 try {
     $sourceQueryStore = Get-QueryStoreInfo -Server $SourceServer -Database $SourceDatabase
     Write-Host "Source Query Store query executed successfully" -ForegroundColor Green
-    if ($sourceQueryStore) {
+if ($sourceQueryStore) {
         Write-Host "DEBUG: Source returned $($sourceQueryStore.GetType().Name)" -ForegroundColor Yellow
-        if ($sourceQueryStore.GetType().Name -eq "DataTable") {
+    if ($sourceQueryStore.GetType().Name -eq "DataTable") {
             Write-Host "DEBUG: Source has $($sourceQueryStore.Rows.Count) rows" -ForegroundColor Yellow
         }
     } else {
@@ -5582,7 +5751,7 @@ if ($targetQueryStore) {
         $forcedPlans = $targetQueryStore.Rows | Where-Object { $_.ITEM_TYPE -eq 'QS_FORCED_PLAN' }
         if ($configRow) {
             Write-Host "Target Query Store: $($configRow.QS_STATUS) - State: $($configRow.ACTUAL_STATE) (Items: $($targetQueryStore.Rows.Count))" -ForegroundColor Magenta
-        } else {
+    } else {
             Write-Host "Target Query Store: Items: $($targetQueryStore.Rows.Count)" -ForegroundColor Magenta
         }
     } elseif ($targetQueryStore.GetType().Name -eq "Object[]" -and $targetQueryStore.Count -gt 0) {
@@ -6466,11 +6635,11 @@ if ($sourceRoles -or $targetRoles) {
 # Compare Query Store configuration and forced plans (by ITEM_TYPE,OBJECT_NAME)
 Write-Host "Comparing Query Store configuration and forced plans..." -ForegroundColor Yellow
 $global:ComparisonData.QueryStore = Compare-Datasets -Source $sourceQueryStore -Target $targetQueryStore -KeyColumns "ITEM_TYPE,OBJECT_NAME"
-Write-Host "Query Store comparison results:" -ForegroundColor Cyan
-Write-Host "  Matches: $($global:ComparisonData.QueryStore.Matches.Count)" -ForegroundColor Green
-Write-Host "  Source Only: $($global:ComparisonData.QueryStore.SourceOnly.Count)" -ForegroundColor Yellow
-Write-Host "  Target Only: $($global:ComparisonData.QueryStore.TargetOnly.Count)" -ForegroundColor Blue
-Write-Host "  Differences: $($global:ComparisonData.QueryStore.Differences.Count)" -ForegroundColor Red
+    Write-Host "Query Store comparison results:" -ForegroundColor Cyan
+    Write-Host "  Matches: $($global:ComparisonData.QueryStore.Matches.Count)" -ForegroundColor Green
+    Write-Host "  Source Only: $($global:ComparisonData.QueryStore.SourceOnly.Count)" -ForegroundColor Yellow
+    Write-Host "  Target Only: $($global:ComparisonData.QueryStore.TargetOnly.Count)" -ForegroundColor Blue
+    Write-Host "  Differences: $($global:ComparisonData.QueryStore.Differences.Count)" -ForegroundColor Red
 # Compare database options (individual settings)
 if ($sourceDatabaseOptions -or $targetDatabaseOptions) {
     Write-Host "Comparing database option settings..." -ForegroundColor Yellow

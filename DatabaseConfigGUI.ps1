@@ -35,7 +35,8 @@ function Test-DatabaseConnection {
         [string]$Database,
         [string]$AuthType,
         [string]$Username = "",
-        [string]$Password = ""
+        [string]$Password = "",
+        [ref]$ErrorMessage
     )
     
     try {
@@ -56,8 +57,12 @@ function Test-DatabaseConnection {
         $connection = New-Object System.Data.SqlClient.SqlConnection($connectionString)
         $connection.Open()
         $connection.Close()
+        if ($ErrorMessage) { $ErrorMessage.Value = "" }
         return $true
     } catch {
+        $msg = $_.Exception.Message
+        if ($_.Exception.InnerException) { $msg += " - " + $_.Exception.InnerException.Message }
+        if ($ErrorMessage) { $ErrorMessage.Value = $msg }
         return $false
     }
 }
@@ -155,18 +160,21 @@ if (Load-Configurations) {
     # Create the main form
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Database Schema Drift Detection - Configuration"
-    $form.Size = New-Object System.Drawing.Size(600, 500)
+    $form.Size = New-Object System.Drawing.Size(640, 520)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
     $form.MinimizeBox = $false
+    $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    $form.BackColor = [System.Drawing.Color]::FromArgb(250,252,255)
     
     # Title
     $lblTitle = New-Object System.Windows.Forms.Label
     $lblTitle.Text = "Database Schema Drift Detection"
-    $lblTitle.Font = New-Object System.Drawing.Font("Microsoft Sans Serif", 12, [System.Drawing.FontStyle]::Bold)
-    $lblTitle.Location = New-Object System.Drawing.Point(20, 20)
-    $lblTitle.Size = New-Object System.Drawing.Size(400, 25)
+    $lblTitle.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+    $lblTitle.ForeColor = [System.Drawing.Color]::FromArgb(30,41,59)
+    $lblTitle.Location = New-Object System.Drawing.Point(20, 18)
+    $lblTitle.Size = New-Object System.Drawing.Size(500, 28)
     $form.Controls.Add($lblTitle)
     
     # Scenario selection
@@ -280,24 +288,43 @@ if (Load-Configurations) {
     $btnTestSource.Text = "Test Source"
     $btnTestSource.Location = New-Object System.Drawing.Point(10, 25)
     $btnTestSource.Size = New-Object System.Drawing.Size(100, 30)
+    $btnTestSource.FlatStyle = 'Flat'
+    $btnTestSource.FlatAppearance.BorderSize = 1
+    $btnTestSource.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(203,213,225)
+    $btnTestSource.BackColor = [System.Drawing.Color]::FromArgb(239,246,255)
+    $btnTestSource.ForeColor = [System.Drawing.Color]::FromArgb(30,41,59)
     $grpTest.Controls.Add($btnTestSource)
     
     $btnTestTarget = New-Object System.Windows.Forms.Button
     $btnTestTarget.Text = "Test Target"
     $btnTestTarget.Location = New-Object System.Drawing.Point(120, 25)
     $btnTestTarget.Size = New-Object System.Drawing.Size(100, 30)
+    $btnTestTarget.FlatStyle = 'Flat'
+    $btnTestTarget.FlatAppearance.BorderSize = 1
+    $btnTestTarget.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(203,213,225)
+    $btnTestTarget.BackColor = [System.Drawing.Color]::FromArgb(239,246,255)
+    $btnTestTarget.ForeColor = [System.Drawing.Color]::FromArgb(30,41,59)
     $grpTest.Controls.Add($btnTestTarget)
     
     $btnTestBoth = New-Object System.Windows.Forms.Button
     $btnTestBoth.Text = "Test Both"
     $btnTestBoth.Location = New-Object System.Drawing.Point(230, 25)
     $btnTestBoth.Size = New-Object System.Drawing.Size(100, 30)
+    $btnTestBoth.FlatStyle = 'Flat'
+    $btnTestBoth.FlatAppearance.BorderSize = 1
+    $btnTestBoth.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(203,213,225)
+    $btnTestBoth.BackColor = [System.Drawing.Color]::FromArgb(239,246,255)
+    $btnTestBoth.ForeColor = [System.Drawing.Color]::FromArgb(30,41,59)
     $grpTest.Controls.Add($btnTestBoth)
     
-    $lblTestResult = New-Object System.Windows.Forms.Label
-    $lblTestResult.Text = ""
-    $lblTestResult.Location = New-Object System.Drawing.Point(240, 30)
-    $lblTestResult.Size = New-Object System.Drawing.Size(270, 20)
+    $lblTestResult = New-Object System.Windows.Forms.TextBox
+    $lblTestResult.Multiline = $true
+    $lblTestResult.ReadOnly = $true
+    $lblTestResult.BorderStyle = 'None'
+    $lblTestResult.BackColor = $form.BackColor
+    $lblTestResult.Location = New-Object System.Drawing.Point(340, 20)
+    $lblTestResult.Size = New-Object System.Drawing.Size(170, 50)
+    $lblTestResult.ScrollBars = 'Vertical'
     $grpTest.Controls.Add($lblTestResult)
     
     # Action Buttons
@@ -306,12 +333,22 @@ if (Load-Configurations) {
     $btnRun.Location = New-Object System.Drawing.Point(20, 340)
     $btnRun.Size = New-Object System.Drawing.Size(150, 40)
     $btnRun.Enabled = $false
+    $btnRun.FlatStyle = 'Flat'
+    $btnRun.FlatAppearance.BorderSize = 1
+    $btnRun.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(203,213,225)
+    $btnRun.BackColor = [System.Drawing.Color]::FromArgb(219,234,254)
+    $btnRun.ForeColor = [System.Drawing.Color]::FromArgb(17,24,39)
     $form.Controls.Add($btnRun)
     
     $btnSave = New-Object System.Windows.Forms.Button
     $btnSave.Text = "Save Configuration"
     $btnSave.Location = New-Object System.Drawing.Point(180, 340)
     $btnSave.Size = New-Object System.Drawing.Size(150, 40)
+    $btnSave.FlatStyle = 'Flat'
+    $btnSave.FlatAppearance.BorderSize = 1
+    $btnSave.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(203,213,225)
+    $btnSave.BackColor = [System.Drawing.Color]::FromArgb(243,244,246)
+    $btnSave.ForeColor = [System.Drawing.Color]::FromArgb(17,24,39)
     $form.Controls.Add($btnSave)
     
     $btnCancel = New-Object System.Windows.Forms.Button
@@ -319,6 +356,11 @@ if (Load-Configurations) {
     $btnCancel.Location = New-Object System.Drawing.Point(340, 340)
     $btnCancel.Size = New-Object System.Drawing.Size(100, 40)
     $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $btnCancel.FlatStyle = 'Flat'
+    $btnCancel.FlatAppearance.BorderSize = 1
+    $btnCancel.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(203,213,225)
+    $btnCancel.BackColor = [System.Drawing.Color]::FromArgb(243,244,246)
+    $btnCancel.ForeColor = [System.Drawing.Color]::FromArgb(17,24,39)
     $form.Controls.Add($btnCancel)
     
     # Status label
@@ -326,7 +368,7 @@ if (Load-Configurations) {
     $lblStatus.Text = "Select a scenario to begin"
     $lblStatus.Location = New-Object System.Drawing.Point(20, 400)
     $lblStatus.Size = New-Object System.Drawing.Size(520, 20)
-    $lblStatus.ForeColor = [System.Drawing.Color]::Blue
+    $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(30,64,175)
     $form.Controls.Add($lblStatus)
     
     # Authentication configurations
@@ -403,14 +445,15 @@ if (Load-Configurations) {
         $lblTestResult.Text = "Testing source connection..."
         $lblTestResult.ForeColor = [System.Drawing.Color]::Blue
         
-        $success = Test-DatabaseConnection -Server $txtSourceServer.Text -Database $txtSourceDB.Text -AuthType $SourceAuth.Type -Username $SourceAuth.Username -Password $SourceAuth.Password
+        $err = ""
+        $success = Test-DatabaseConnection -Server $txtSourceServer.Text -Database $txtSourceDB.Text -AuthType $SourceAuth.Type -Username $SourceAuth.Username -Password $SourceAuth.Password -ErrorMessage ([ref]$err)
         
         if ($success) {
-            $lblTestResult.Text = "Source connection: SUCCESS"
             $lblTestResult.ForeColor = [System.Drawing.Color]::Green
+            $lblTestResult.Text = "Source connection: SUCCESS"
         } else {
-            $lblTestResult.Text = "Source connection: FAILED"
             $lblTestResult.ForeColor = [System.Drawing.Color]::Red
+            $lblTestResult.Text = "Source connection: FAILED`r`n$err"
         }
         
         # Check if both connections are working
@@ -421,14 +464,15 @@ if (Load-Configurations) {
         $lblTestResult.Text = "Testing target connection..."
         $lblTestResult.ForeColor = [System.Drawing.Color]::Blue
         
-        $success = Test-DatabaseConnection -Server $txtTargetServer.Text -Database $txtTargetDB.Text -AuthType $TargetAuth.Type -Username $TargetAuth.Username -Password $TargetAuth.Password
+        $err = ""
+        $success = Test-DatabaseConnection -Server $txtTargetServer.Text -Database $txtTargetDB.Text -AuthType $TargetAuth.Type -Username $TargetAuth.Username -Password $TargetAuth.Password -ErrorMessage ([ref]$err)
         
         if ($success) {
-            $lblTestResult.Text = "Target connection: SUCCESS"
             $lblTestResult.ForeColor = [System.Drawing.Color]::Green
+            $lblTestResult.Text = "Target connection: SUCCESS"
         } else {
-            $lblTestResult.Text = "Target connection: FAILED"
             $lblTestResult.ForeColor = [System.Drawing.Color]::Red
+            $lblTestResult.Text = "Target connection: FAILED`r`n$err"
         }
         
         # Check if both connections are working
@@ -443,18 +487,27 @@ if (Load-Configurations) {
         Test-BothConnections
         
         if ($btnRun.Enabled) {
-            $lblTestResult.Text = "Both connections: SUCCESS"
             $lblTestResult.ForeColor = [System.Drawing.Color]::Green
+            $lblTestResult.Text = "Both connections: SUCCESS"
         } else {
-            $lblTestResult.Text = "One or both connections: FAILED"
+            # Provide specific failures
+            $srcErr = ""; $tgtErr = ""
+            $srcOk = Test-DatabaseConnection -Server $txtSourceServer.Text -Database $txtSourceDB.Text -AuthType $SourceAuth.Type -Username $SourceAuth.Username -Password $SourceAuth.Password -ErrorMessage ([ref]$srcErr)
+            $tgtOk = Test-DatabaseConnection -Server $txtTargetServer.Text -Database $txtTargetDB.Text -AuthType $TargetAuth.Type -Username $TargetAuth.Username -Password $TargetAuth.Password -ErrorMessage ([ref]$tgtErr)
+            $msgParts = @()
+            if (-not $srcOk) { $msgParts += "Source: $srcErr" }
+            if (-not $tgtOk) { $msgParts += "Target: $tgtErr" }
+            $detail = ($msgParts -join " | ")
             $lblTestResult.ForeColor = [System.Drawing.Color]::Red
+            $lblTestResult.Text = "One or both connections: FAILED`r`n$detail"
         }
     })
     
     # Function to check if both connections are working
     function Test-BothConnections {
-        $sourceSuccess = Test-DatabaseConnection -Server $txtSourceServer.Text -Database $txtSourceDB.Text -AuthType $SourceAuth.Type -Username $SourceAuth.Username -Password $SourceAuth.Password
-        $targetSuccess = Test-DatabaseConnection -Server $txtTargetServer.Text -Database $txtTargetDB.Text -AuthType $TargetAuth.Type -Username $TargetAuth.Username -Password $TargetAuth.Password
+        $srcErr = ""; $tgtErr = ""
+        $sourceSuccess = Test-DatabaseConnection -Server $txtSourceServer.Text -Database $txtSourceDB.Text -AuthType $SourceAuth.Type -Username $SourceAuth.Username -Password $SourceAuth.Password -ErrorMessage ([ref]$srcErr)
+        $targetSuccess = Test-DatabaseConnection -Server $txtTargetServer.Text -Database $txtTargetDB.Text -AuthType $TargetAuth.Type -Username $TargetAuth.Username -Password $TargetAuth.Password -ErrorMessage ([ref]$tgtErr)
         
         if ($sourceSuccess -and $targetSuccess) {
             $btnRun.Enabled = $true
@@ -462,7 +515,10 @@ if (Load-Configurations) {
             $lblStatus.ForeColor = [System.Drawing.Color]::Green
         } else {
             $btnRun.Enabled = $false
-            $lblStatus.Text = "Please test both connections before running drift detection."
+            $detail = @()
+            if (-not $sourceSuccess) { $detail += "Source: $srcErr" }
+            if (-not $targetSuccess) { $detail += "Target: $tgtErr" }
+            $lblStatus.Text = "Please test both connections before running drift detection. " + ($detail -join " | ")
             $lblStatus.ForeColor = [System.Drawing.Color]::Orange
         }
     }
