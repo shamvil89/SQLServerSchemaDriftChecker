@@ -2147,6 +2147,11 @@ function New-HTMLReport {
             padding: 12px 15px;
             border-bottom: 1px solid #dee2e6;
             vertical-align: top;
+            word-wrap: break-word;
+            word-break: break-all;
+            overflow-wrap: anywhere;
+            max-width: 500px;
+            white-space: normal;
         }
         
         .comparison-table tr:hover {
@@ -2320,6 +2325,12 @@ function New-HTMLReport {
             font-size: 12px;
             margin-left: 8px;
             transition: background-color 0.3s;
+            display: inline-block;
+            max-width: 100px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            vertical-align: middle;
         }
         
         .view-code-btn:hover {
@@ -5525,14 +5536,18 @@ function New-SectionHTML {
                     }
                 } elseif ($SectionName -eq "Functions") {
                     $objectName = "$($item.Source.SCHEMA_NAME).$($item.Source.FUNCTION_NAME)"
-                    $sourceDef = ($item.Source.definition -replace '"', '\&quot;' -replace "'", "\'")
-                    $targetDef = ($item.Target.definition -replace '"', '\&quot;' -replace "'", "\'")
+                    $sourceDef = [System.Web.HttpUtility]::HtmlEncode($item.Source.definition)
+                    $sourceDef = ($sourceDef -replace '"', '&quot;' -replace "'", '&#39;')
+                    $targetDef = [System.Web.HttpUtility]::HtmlEncode($item.Target.definition)
+                    $targetDef = ($targetDef -replace '"', '&quot;' -replace "'", '&#39;')
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-function='$($item.Source.FUNCTION_NAME)' data-source-code='$sourceDef' data-target-code='$targetDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Function definition differences detected $viewCodeBtn"
                 } elseif ($SectionName -eq "Stored Procedures") {
                     $objectName = "$($item.Source.SCHEMA_NAME).$($item.Source.PROCEDURE_NAME)"
-                    $sourceDef = ($item.Source.definition -replace '"', '\&quot;' -replace "'", "\'")
-                    $targetDef = ($item.Target.definition -replace '"', '\&quot;' -replace "'", "\'")
+                    $sourceDef = [System.Web.HttpUtility]::HtmlEncode($item.Source.definition)
+                    $sourceDef = ($sourceDef -replace '"', '&quot;' -replace "'", '&#39;')
+                    $targetDef = [System.Web.HttpUtility]::HtmlEncode($item.Target.definition)
+                    $targetDef = ($targetDef -replace '"', '&quot;' -replace "'", '&#39;')
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-function='$($item.Source.PROCEDURE_NAME)' data-source-code='$sourceDef' data-target-code='$targetDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Procedure definition differences detected $viewCodeBtn"
                 } elseif ($SectionName -eq "Data Types") {
@@ -5761,12 +5776,14 @@ function New-SectionHTML {
                     $details = "Type: $($item.INDEX_TYPE), Unique: $($item.is_unique), Columns: [$($item.INDEX_COLUMNS)] $viewCodeBtn"
                 } elseif ($SectionName -eq "Functions") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.FUNCTION_NAME)"
-                    $funcDef = ($item.definition -replace '"', '\&quot;' -replace "'", "\'")
+                    $funcDef = [System.Web.HttpUtility]::HtmlEncode($item.definition)
+                    $funcDef = ($funcDef -replace '"', '&quot;' -replace "'", '&#39;')
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.FUNCTION_NAME)' data-source-code='$funcDef' data-target-code='$funcDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Type: $($item.FUNCTION_TYPE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Stored Procedures") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.PROCEDURE_NAME)"
-                    $procDef = ($item.definition -replace '"', '\&quot;' -replace "'", "\'")
+                    $procDef = [System.Web.HttpUtility]::HtmlEncode($item.definition)
+                    $procDef = ($procDef -replace '"', '&quot;' -replace "'", '&#39;')
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.PROCEDURE_NAME)' data-source-code='$procDef' data-target-code='$procDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Created: $($item.create_date) $viewCodeBtn"
                 } elseif ($SectionName -eq "Data Types") {
@@ -5937,12 +5954,14 @@ function New-SectionHTML {
                     $details = "Type: $($item.INDEX_TYPE), Unique: $($item.is_unique), Columns: [$($item.INDEX_COLUMNS)] $viewCodeBtn"
                 } elseif ($SectionName -eq "Functions") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.FUNCTION_NAME)"
-                    $funcDef = ($item.definition -replace '"', '\&quot;' -replace "'", "\'")
+                    $funcDef = [System.Web.HttpUtility]::HtmlEncode($item.definition)
+                    $funcDef = ($funcDef -replace '"', '&quot;' -replace "'", '&#39;')
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.FUNCTION_NAME)' data-source-code='$funcDef' data-target-code='' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Type: $($item.FUNCTION_TYPE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Stored Procedures") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.PROCEDURE_NAME)"
-                    $procDef = ($item.definition -replace '"', '\&quot;' -replace "'", "\'")
+                    $procDef = [System.Web.HttpUtility]::HtmlEncode($item.definition)
+                    $procDef = ($procDef -replace '"', '&quot;' -replace "'", '&#39;')
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.PROCEDURE_NAME)' data-source-code='$procDef' data-target-code='' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Created: $($item.create_date) $viewCodeBtn"
                 } elseif ($SectionName -eq "Data Types") {
@@ -6070,12 +6089,14 @@ function New-SectionHTML {
                     $details = "Forced plan present in target $viewCodeBtn"
                 } elseif ($SectionName -eq "Functions") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.FUNCTION_NAME)"
-                    $funcDef = ($item.definition -replace '"', '\&quot;' -replace "'", "\'")
+                    $funcDef = [System.Web.HttpUtility]::HtmlEncode($item.definition)
+                    $funcDef = ($funcDef -replace '"', '&quot;' -replace "'", '&#39;')
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.FUNCTION_NAME)' data-source-code='' data-target-code='$funcDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Type: $($item.FUNCTION_TYPE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Stored Procedures") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.PROCEDURE_NAME)"
-                    $procDef = ($item.definition -replace '"', '\&quot;' -replace "'", "\'")
+                    $procDef = [System.Web.HttpUtility]::HtmlEncode($item.definition)
+                    $procDef = ($procDef -replace '"', '&quot;' -replace "'", '&#39;')
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.PROCEDURE_NAME)' data-source-code='' data-target-code='$procDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Created: $($item.create_date) $viewCodeBtn"
                 } elseif ($SectionName -eq "Data Types") {
