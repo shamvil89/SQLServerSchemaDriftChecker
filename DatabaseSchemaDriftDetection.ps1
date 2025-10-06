@@ -2464,8 +2464,9 @@ function New-HTMLReport {
             white-space: pre-wrap;
             word-wrap: break-word;
             margin: 0;
-            overflow: auto;
-            height: 100%;
+            overflow: visible;
+            height: auto;
+            min-height: 100%;
             box-sizing: border-box;
             counter-reset: line-number;
         }
@@ -2496,6 +2497,10 @@ function New-HTMLReport {
         .line-content {
             flex: 1;
             padding: 0 4px;
+            word-wrap: break-word;
+            word-break: break-all;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
         }
         
         .code-diff-highlight {
@@ -3478,14 +3483,14 @@ function New-HTMLReport {
             // Get data from button attributes
             const schemaName = buttonElement.getAttribute('data-schema');
             const functionName = buttonElement.getAttribute('data-function');
-            let sourceCode = buttonElement.getAttribute('data-source-code');
-            let targetCode = buttonElement.getAttribute('data-target-code');
+            let sourceCode = (buttonElement.getAttribute('data-source-code') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            let targetCode = (buttonElement.getAttribute('data-target-code') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             // For plans, fetch base64 from hidden textareas by id
             if (functionName === 'QueryStorePlan') {
                 const srcId = buttonElement.getAttribute('data-source-plan-id');
                 const tgtId = buttonElement.getAttribute('data-target-plan-id');
-                if (srcId) { const el = document.getElementById(srcId); if (el) sourceCode = el.value || el.textContent; }
-                if (tgtId) { const el = document.getElementById(tgtId); if (el) targetCode = el.value || el.textContent; }
+                if (srcId) { const el = document.getElementById(srcId); if (el) sourceCode = (el.value || el.textContent || '').replace(/&#x0D;/g, '').replace(/\r/g, ''); }
+                if (tgtId) { const el = document.getElementById(tgtId); if (el) targetCode = (el.value || el.textContent || '').replace(/&#x0D;/g, '').replace(/\r/g, ''); }
             }
             
             // Helpers for downloads and decoding
@@ -3539,7 +3544,8 @@ function New-HTMLReport {
             if (functionName === 'QueryStorePlan') {
                 title.textContent = 'Execution Plan (.sqlplan)';
             } else {
-                title.textContent = 'Function: ' + (schemaName ? schemaName + '.' : '') + functionName;
+                const objectType = buttonElement.getAttribute('data-object-type') || 'Function';
+                title.textContent = objectType + ': ' + (schemaName ? schemaName + '.' : '') + functionName;
             }
             
             // Set panel headers
@@ -3596,6 +3602,8 @@ function New-HTMLReport {
                 if (targetActionBtn) { targetActionBtn.textContent = 'Copy'; targetActionBtn.onclick = function(){ copyCode('targetCodeBlock', targetActionBtn); }; }
 
                 if (sourceCode && sourceCode.trim() !== '' && targetCode && targetCode.trim() !== '') {
+                    console.log('Comparing code blocks - Source length:', sourceCode.length, 'Target length:', targetCode.length);
+                    console.log('Are they equal?', sourceCode === targetCode);
                     const diffResult = highlightCharacterDifferences(sourceCode, targetCode);
                     sourceCodeBlock.innerHTML = formatCodeWithLineNumbers(diffResult.source);
                     targetCodeBlock.innerHTML = formatCodeWithLineNumbers(diffResult.target);
@@ -3619,6 +3627,13 @@ function New-HTMLReport {
         function highlightCharacterDifferences(sourceCode, targetCode) {
             const sourceLines = sourceCode.split('\n');
             const targetLines = targetCode.split('\n');
+            
+            // For very large files (> 1000 lines), use faster simple line-by-line comparison
+            const MAX_LINES_FOR_LCS = 1000;
+            if (sourceLines.length > MAX_LINES_FOR_LCS || targetLines.length > MAX_LINES_FOR_LCS) {
+                console.log('Using simple diff for large file:', sourceLines.length, 'lines');
+                return highlightDifferencesSimple(sourceLines, targetLines);
+            }
             
             // If tiny snippets (<= 2 non-empty lines combined), suppress add/delete markers
             const totalNonEmpty = sourceLines.filter(l => l.trim() !== '').length + targetLines.filter(l => l.trim() !== '').length;
@@ -3684,6 +3699,45 @@ function New-HTMLReport {
                 }
             }
             
+            return {
+                source: sourceHtml,
+                target: targetHtml
+            };
+        }
+        
+        // Fast simple diff for large code blocks - just compares line by line
+        function highlightDifferencesSimple(sourceLines, targetLines) {
+            let sourceHtml = '';
+            let targetHtml = '';
+            const maxLen = Math.max(sourceLines.length, targetLines.length);
+            let diffCount = 0;
+            
+            for (let i = 0; i < maxLen; i++) {
+                const sourceLine = sourceLines[i] !== undefined ? sourceLines[i] : '';
+                const targetLine = targetLines[i] !== undefined ? targetLines[i] : '';
+                
+                if (sourceLine !== targetLine) diffCount++;
+                
+                if (sourceLine === targetLine) {
+                    // Lines are identical
+                    sourceHtml += escapeHtml(sourceLine) + '\n';
+                    targetHtml += escapeHtml(targetLine) + '\n';
+                } else if (sourceLine && !targetLine) {
+                    // Source has a line, target doesn't (deleted)
+                    sourceHtml += '<span style="background-color: rgba(220, 53, 69, 0.3); color: #ff6b6b;">' + escapeHtml(sourceLine) + '</span>\n';
+                    targetHtml += '<span style="background-color: rgba(220, 53, 69, 0.1); color: #999;">[Line removed]</span>\n';
+                } else if (!sourceLine && targetLine) {
+                    // Target has a line, source doesn't (added)
+                    sourceHtml += '<span style="background-color: rgba(40, 167, 69, 0.1); color: #999;">[Line added]</span>\n';
+                    targetHtml += '<span style="background-color: rgba(40, 167, 69, 0.3); color: #28a745;">' + escapeHtml(targetLine) + '</span>\n';
+                } else {
+                    // Both have lines but they're different
+                    sourceHtml += '<span style="background-color: rgba(255, 193, 7, 0.3);">' + escapeHtml(sourceLine) + '</span>\n';
+                    targetHtml += '<span style="background-color: rgba(255, 193, 7, 0.3);">' + escapeHtml(targetLine) + '</span>\n';
+                }
+            }
+            
+            console.log('Simple diff found', diffCount, 'different lines out of', maxLen, 'total lines');
             return {
                 source: sourceHtml,
                 target: targetHtml
@@ -4019,8 +4073,8 @@ function New-HTMLReport {
         function showTableCode(button) {
             const schemaName = button.getAttribute('data-schema');
             const tableName = button.getAttribute('data-table');
-            const sourceCreateStatement = button.getAttribute('data-source-create');
-            const targetCreateStatement = button.getAttribute('data-target-create');
+            const sourceCreateStatement = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCreateStatement = (button.getAttribute('data-target-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceCreateDate = button.getAttribute('data-source-create-date');
             const targetCreateDate = button.getAttribute('data-target-create-date');
             const sourceModifyDate = button.getAttribute('data-source-modify-date');
@@ -4078,8 +4132,8 @@ function New-HTMLReport {
             const schemaName = button.getAttribute('data-schema');
             const tableName = button.getAttribute('data-table');
             const columnName = button.getAttribute('data-column');
-            const sourceCreateStatement = button.getAttribute('data-source-create');
-            const targetCreateStatement = button.getAttribute('data-target-create');
+            const sourceCreateStatement = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCreateStatement = (button.getAttribute('data-target-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceDataType = button.getAttribute('data-source-datatype');
             const targetDataType = button.getAttribute('data-target-datatype');
             const sourceNullable = button.getAttribute('data-source-nullable');
@@ -4135,8 +4189,8 @@ function New-HTMLReport {
             const schemaName = button.getAttribute('data-schema');
             const tableName = button.getAttribute('data-table');
             const indexName = button.getAttribute('data-index');
-            const sourceCreateStatement = button.getAttribute('data-source-create');
-            const targetCreateStatement = button.getAttribute('data-target-create');
+            const sourceCreateStatement = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCreateStatement = (button.getAttribute('data-target-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceIndexType = button.getAttribute('data-source-index-type');
             const targetIndexType = button.getAttribute('data-target-index-type');
             const sourceIsUnique = button.getAttribute('data-source-is-unique');
@@ -4191,8 +4245,8 @@ function New-HTMLReport {
             const schemaName = button.getAttribute('data-schema');
             const tableName = button.getAttribute('data-table');
             const constraintName = button.getAttribute('data-constraint');
-            const sourceCreateStatement = button.getAttribute('data-source-create');
-            const targetCreateStatement = button.getAttribute('data-target-create');
+            const sourceCreateStatement = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCreateStatement = (button.getAttribute('data-target-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceType = button.getAttribute('data-source-type');
             const targetType = button.getAttribute('data-target-type');
             const sourceDisabled = button.getAttribute('data-source-disabled');
@@ -4246,8 +4300,8 @@ function New-HTMLReport {
         function showViewCode(button) {
             const schemaName = button.getAttribute('data-schema');
             const viewName = button.getAttribute('data-view');
-            const sourceCode = button.getAttribute('data-source-code');
-            const targetCode = button.getAttribute('data-target-code');
+            const sourceCode = (button.getAttribute('data-source-code') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCode = (button.getAttribute('data-target-code') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceCreateDate = button.getAttribute('data-source-create-date');
             const targetCreateDate = button.getAttribute('data-target-create-date');
             const sourceModifyDate = button.getAttribute('data-source-modify-date');
@@ -4302,8 +4356,8 @@ function New-HTMLReport {
         function showSynonymCode(button) {
             const schemaName = button.getAttribute('data-schema');
             const synonymName = button.getAttribute('data-synonym');
-            const sourceCreateStatement = button.getAttribute('data-source-create');
-            const targetCreateStatement = button.getAttribute('data-target-create');
+            const sourceCreateStatement = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCreateStatement = (button.getAttribute('data-target-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceBaseObject = button.getAttribute('data-source-base-object');
             const targetBaseObject = button.getAttribute('data-target-base-object');
             
@@ -4356,8 +4410,8 @@ function New-HTMLReport {
             const schemaName = button.getAttribute('data-schema');
             const tableName = button.getAttribute('data-table');
             const triggerName = button.getAttribute('data-trigger');
-            const sourceCreateStatement = button.getAttribute('data-source-create');
-            const targetCreateStatement = button.getAttribute('data-target-create');
+            const sourceCreateStatement = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCreateStatement = (button.getAttribute('data-target-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceIsDisabled = button.getAttribute('data-source-disabled');
             const targetIsDisabled = button.getAttribute('data-target-disabled');
             const sourceIsInsteadOf = button.getAttribute('data-source-instead-of');
@@ -4411,8 +4465,8 @@ function New-HTMLReport {
         
         function showDatabaseTriggerCode(button) {
             const triggerName = button.getAttribute('data-trigger');
-            const sourceCreateStatement = button.getAttribute('data-source-create');
-            const targetCreateStatement = button.getAttribute('data-target-create');
+            const sourceCreateStatement = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCreateStatement = (button.getAttribute('data-target-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceIsDisabled = button.getAttribute('data-source-disabled');
             const targetIsDisabled = button.getAttribute('data-target-disabled');
             
@@ -4466,8 +4520,8 @@ function New-HTMLReport {
             const schemaName = button.getAttribute('data-schema');
             const tableName = button.getAttribute('data-table');
             const keyName = button.getAttribute('data-key');
-            const sourceCode = button.getAttribute('data-source-code');
-            const targetCode = button.getAttribute('data-target-code');
+            const sourceCode = (button.getAttribute('data-source-code') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCode = (button.getAttribute('data-target-code') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceKeyType = button.getAttribute('data-source-key-type');
             const targetKeyType = button.getAttribute('data-target-key-type');
             const sourceIsPrimary = button.getAttribute('data-source-is-primary');
@@ -4522,8 +4576,8 @@ function New-HTMLReport {
         }
         function showFileCode(button) {
             const fileName = button.getAttribute('data-file');
-            const sourceCreate = button.getAttribute('data-source-create');
-            const targetCreate = button.getAttribute('data-target-create');
+            const sourceCreate = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCreate = (button.getAttribute('data-target-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceType = button.getAttribute('data-source-type');
             const targetType = button.getAttribute('data-target-type');
             const sourceSize = button.getAttribute('data-source-size');
@@ -4613,8 +4667,8 @@ function New-HTMLReport {
         
         function showUserCode(button) {
             const userName = button.getAttribute('data-user');
-            const sourceCreate = button.getAttribute('data-source-create');
-            const targetCreate = button.getAttribute('data-target-create');
+            const sourceCreate = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCreate = (button.getAttribute('data-target-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceType = button.getAttribute('data-source-type');
             const targetType = button.getAttribute('data-target-type');
             const sourceRoles = button.getAttribute('data-source-roles');
@@ -4666,8 +4720,8 @@ function New-HTMLReport {
         
         function showRoleCode(button) {
             const roleName = button.getAttribute('data-role');
-            const sourceCreate = button.getAttribute('data-source-create');
-            const targetCreate = button.getAttribute('data-target-create');
+            const sourceCreate = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCreate = (button.getAttribute('data-target-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceType = button.getAttribute('data-source-type');
             const targetType = button.getAttribute('data-target-type');
             const sourceMembers = button.getAttribute('data-source-members');
@@ -4715,8 +4769,8 @@ function New-HTMLReport {
         function showDatabaseOptionCode(button) {
             const databaseName = button.getAttribute('data-database');
             const optionName = button.getAttribute('data-option');
-            const sourceCode = button.getAttribute('data-source-code');
-            const targetCode = button.getAttribute('data-target-code');
+            const sourceCode = (button.getAttribute('data-source-code') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
+            const targetCode = (button.getAttribute('data-target-code') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
             const sourceValue = button.getAttribute('data-source-value');
             const targetValue = button.getAttribute('data-target-value');
             
@@ -5494,8 +5548,8 @@ function New-SectionHTML {
                 # Extract object name based on section type (same logic as above)
                 if ($SectionName -eq "Tables") {
                     $objectName = "$($item.Source.TABLE_SCHEMA).$($item.Source.TABLE_NAME)"
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.TABLE_SCHEMA)' data-table='$($item.Source.TABLE_NAME)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-create-date='$($item.Source.create_date)' data-target-create-date='$($item.Target.create_date)' data-source-modify-date='$($item.Source.modify_date)' data-target-modify-date='$($item.Target.modify_date)' data-source-row-count='$($item.Source.ROW_COUNT)' data-target-row-count='$($item.Target.ROW_COUNT)' onclick='showTableCode(this)'>View Code</button>"
                     $details = "Schema differences detected $viewCodeBtn"
                 } elseif ($SectionName -eq "Columns") {
@@ -5508,8 +5562,8 @@ function New-SectionHTML {
                             $diffDetails += "$diffKey`: $sourceVal <span class='db-badge db-source'>$SourceDatabaseName</span> -> $targetVal <span class='db-badge db-target'>$TargetDatabaseName</span>"
                         }
                     }
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.TABLE_SCHEMA)' data-table='$($item.Source.TABLE_NAME)' data-column='$($item.Source.COLUMN_NAME)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-datatype='$($item.Source.DATA_TYPE)' data-target-datatype='$($item.Target.DATA_TYPE)' data-source-nullable='$($item.Source.IS_NULLABLE)' data-target-nullable='$($item.Target.IS_NULLABLE)' onclick='showColumnCode(this)'>View Code</button>"
                     if ($diffDetails.Count -gt 0) {
                         $details = ($diffDetails -join "; ") + " $viewCodeBtn"
@@ -5526,8 +5580,8 @@ function New-SectionHTML {
                             $diffDetails += "$diffKey`: $sourceVal <span class='db-badge db-source'>$SourceDatabaseName</span> -> $targetVal <span class='db-badge db-target'>$TargetDatabaseName</span>"
                         }
                     }
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-table='$($item.Source.TABLE_NAME)' data-index='$($item.Source.INDEX_NAME)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-index-type='$($item.Source.INDEX_TYPE)' data-target-index-type='$($item.Target.INDEX_TYPE)' data-source-is-unique='$($item.Source.is_unique)' data-target-is-unique='$($item.Target.is_unique)' onclick='showIndexCode(this)'>View Code</button>"
                     if ($diffDetails.Count -gt 0) {
                         $details = ($diffDetails -join "; ") + " $viewCodeBtn"
@@ -5548,7 +5602,7 @@ function New-SectionHTML {
                     $sourceDef = ($sourceDef -replace '"', '&quot;' -replace "'", '&#39;')
                     $targetDef = [System.Web.HttpUtility]::HtmlEncode($item.Target.definition)
                     $targetDef = ($targetDef -replace '"', '&quot;' -replace "'", '&#39;')
-                    $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-function='$($item.Source.PROCEDURE_NAME)' data-source-code='$sourceDef' data-target-code='$targetDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
+                    $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-function='$($item.Source.PROCEDURE_NAME)' data-object-type='Stored Procedure' data-source-code='$sourceDef' data-target-code='$targetDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Procedure definition differences detected $viewCodeBtn"
                 } elseif ($SectionName -eq "Data Types") {
                     $objectName = "$($item.Source.SCHEMA_NAME).$($item.Source.TYPE_NAME)"
@@ -5568,8 +5622,8 @@ function New-SectionHTML {
                             $diffDetails += "$diffKey`: $sourceVal <span class='db-badge db-source'>$SourceDatabaseName</span> -> $targetVal <span class='db-badge db-target'>$TargetDatabaseName</span>"
                         }
                     }
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-table='$($item.Source.TABLE_NAME)' data-constraint='$($item.Source.CONSTRAINT_NAME)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-type='$($item.Source.CONSTRAINT_TYPE)' data-target-type='$($item.Target.CONSTRAINT_TYPE)' data-source-disabled='$($item.Source.is_disabled)' data-target-disabled='$($item.Target.is_disabled)' onclick='showConstraintCode(this)'>View Code</button>"
                     if ($diffDetails.Count -gt 0) {
                         $details = ($diffDetails -join "; ") + " $viewCodeBtn"
@@ -5584,20 +5638,20 @@ function New-SectionHTML {
                     $details = "View definition differences detected $viewCodeBtn"
                 } elseif ($SectionName -eq "Synonyms") {
                     $objectName = "$($item.Source.SCHEMA_NAME).$($item.Source.SYNONYM_NAME)"
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-synonym='$($item.Source.SYNONYM_NAME)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-base-object='$($item.Source.base_object_name)' data-target-base-object='$($item.Target.base_object_name)' onclick='showSynonymCode(this)'>View Code</button>"
                     $details = "Synonym definition differences detected $viewCodeBtn"
                 } elseif ($SectionName -eq "Table Triggers") {
                     $objectName = "$($item.Source.SCHEMA_NAME).$($item.Source.TABLE_NAME).$($item.Source.TRIGGER_NAME)"
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-table='$($item.Source.TABLE_NAME)' data-trigger='$($item.Source.TRIGGER_NAME)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-disabled='$($item.Source.is_disabled)' data-target-disabled='$($item.Target.is_disabled)' data-source-instead-of='$($item.Source.is_instead_of_trigger)' data-target-instead-of='$($item.Target.is_instead_of_trigger)' onclick='showTableTriggerCode(this)'>View Code</button>"
                     $details = "Table trigger definition differences detected $viewCodeBtn"
                 } elseif ($SectionName -eq "Database Triggers") {
                     $objectName = "$($item.Source.TRIGGER_NAME)"
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-trigger='$($item.Source.TRIGGER_NAME)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-disabled='$($item.Source.is_disabled)' data-target-disabled='$($item.Target.is_disabled)' onclick='showDatabaseTriggerCode(this)'>View Code</button>"
                     $details = "Database trigger definition differences detected $viewCodeBtn"
                 } elseif ($SectionName -eq "Keys") {
@@ -5610,8 +5664,8 @@ function New-SectionHTML {
                             $diffDetails += "$diffKey`: $sourceVal <span class='db-badge db-source'>$SourceDatabaseName</span> -> $targetVal <span class='db-badge db-target'>$TargetDatabaseName</span>"
                         }
                     }
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.Source.SCHEMA_NAME)' data-table='$($item.Source.TABLE_NAME)' data-key='$($item.Source.KEY_NAME)' data-source-code='$sourceCreateStatement' data-target-code='$targetCreateStatement' data-source-key-type='$($item.Source.KEY_TYPE)' data-target-key-type='$($item.Target.KEY_TYPE)' data-source-is-primary='$($item.Source.is_primary_key)' data-target-is-primary='$($item.Target.is_primary_key)' data-source-is-unique='$($item.Source.is_unique)' data-target-is-unique='$($item.Target.is_unique)' onclick='showKeyCode(this)'>View Code</button>"
                     if ($diffDetails.Count -gt 0) {
                         $details = ($diffDetails -join "; ") + " $viewCodeBtn"
@@ -5638,8 +5692,8 @@ function New-SectionHTML {
                     }
                 } elseif ($SectionName -eq "File Information") {
                     $objectName = $item.Source.name
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-file='$($item.Source.name)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-type='$($item.Source.type_desc)' data-target-type='$($item.Target.type_desc)' data-source-size='$($item.Source.size_mb)' data-target-size='$($item.Target.size_mb)' data-source-filegroup='$($item.Source.filegroup_name)' data-target-filegroup='$($item.Target.filegroup_name)' onclick='showFileCode(this)'>View Code</button>"
                     $details = "Type: $($item.Source.type_desc), Size: $($item.Source.size_mb) MB, Filegroup: $($item.Source.filegroup_name), Growth: $($item.Source.growth_display), Max Size: $($item.Source.max_size_display) $viewCodeBtn"
                 } elseif ($SectionName -eq "VLF Information") {
@@ -5705,8 +5759,8 @@ function New-SectionHTML {
                             $diffDetails += "$diffKey`: $sourceVal <span class='db-badge db-source'>$SourceDatabaseName</span> -> $targetVal <span class='db-badge db-target'>$TargetDatabaseName</span>"
                         }
                     }
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-user='$($item.Source.USER_NAME)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-type='$($item.Source.USER_TYPE)' data-target-type='$($item.Target.USER_TYPE)' data-source-roles='$($item.Source.ROLE_MEMBERSHIPS)' data-target-roles='$($item.Target.ROLE_MEMBERSHIPS)' onclick='showUserCode(this)'>View Code</button>"
                     $details = ($diffDetails -join "<br>") + " $viewCodeBtn"
                 } elseif ($SectionName -eq "Roles") {
@@ -5719,8 +5773,8 @@ function New-SectionHTML {
                             $diffDetails += "$diffKey`: $sourceVal <span class='db-badge db-source'>$SourceDatabaseName</span> -> $targetVal <span class='db-badge db-target'>$TargetDatabaseName</span>"
                         }
                     }
-                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Source.CREATE_STATEMENT)
-                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode($item.Target.CREATE_STATEMENT)
+                    $sourceCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Source.CREATE_STATEMENT -replace "`r", ""))
+                    $targetCreateStatement = [System.Web.HttpUtility]::HtmlEncode(($item.Target.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-role='$($item.Source.ROLE_NAME)' data-source-create='$sourceCreateStatement' data-target-create='$targetCreateStatement' data-source-type='$($item.Source.ROLE_TYPE)' data-target-type='$($item.Target.ROLE_TYPE)' data-source-members='$($item.Source.ROLE_MEMBERS)' data-target-members='$($item.Target.ROLE_MEMBERS)' onclick='showRoleCode(this)'>View Code</button>"
                     $details = ($diffDetails -join "<br>") + " $viewCodeBtn"
                 }
@@ -5753,7 +5807,7 @@ function New-SectionHTML {
                 # Extract object name based on section type
                 if ($SectionName -eq "Tables") {
                     $objectName = "$($item.TABLE_SCHEMA).$($item.TABLE_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.TABLE_SCHEMA)' data-table='$($item.TABLE_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-create-date='$($item.create_date)' data-target-create-date='$($item.create_date)' data-source-modify-date='$($item.modify_date)' data-target-modify-date='$($item.modify_date)' data-source-row-count='$($item.ROW_COUNT)' data-target-row-count='$($item.ROW_COUNT)' onclick='showTableCode(this)'>View Code</button>"
                     $details = "Type: $($item.TABLE_TYPE), Rows: $($item.ROW_COUNT) $viewCodeBtn"
                 } elseif ($SectionName -eq "Schemas") {
@@ -5766,12 +5820,12 @@ function New-SectionHTML {
                     }
                 } elseif ($SectionName -eq "Columns") {
                     $objectName = "$($item.TABLE_SCHEMA).$($item.TABLE_NAME).$($item.COLUMN_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.TABLE_SCHEMA)' data-table='$($item.TABLE_NAME)' data-column='$($item.COLUMN_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-datatype='$($item.DATA_TYPE)' data-target-datatype='$($item.DATA_TYPE)' data-source-nullable='$($item.IS_NULLABLE)' data-target-nullable='$($item.IS_NULLABLE)' onclick='showColumnCode(this)'>View Code</button>"
                     $details = "Type: $($item.DATA_TYPE), Nullable: $($item.IS_NULLABLE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Indexes") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.INDEX_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-index='$($item.INDEX_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-index-type='$($item.INDEX_TYPE)' data-target-index-type='$($item.INDEX_TYPE)' data-source-is-unique='$($item.is_unique)' data-target-is-unique='$($item.is_unique)' onclick='showIndexCode(this)'>View Code</button>"
                     $details = "Type: $($item.INDEX_TYPE), Unique: $($item.is_unique), Columns: [$($item.INDEX_COLUMNS)] $viewCodeBtn"
                 } elseif ($SectionName -eq "Functions") {
@@ -5784,7 +5838,7 @@ function New-SectionHTML {
                     $objectName = "$($item.SCHEMA_NAME).$($item.PROCEDURE_NAME)"
                     $procDef = [System.Web.HttpUtility]::HtmlEncode($item.definition)
                     $procDef = ($procDef -replace '"', '&quot;' -replace "'", '&#39;')
-                    $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.PROCEDURE_NAME)' data-source-code='$procDef' data-target-code='$procDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
+                    $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.PROCEDURE_NAME)' data-object-type='Stored Procedure' data-source-code='$procDef' data-target-code='$procDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Created: $($item.create_date) $viewCodeBtn"
                 } elseif ($SectionName -eq "Data Types") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TYPE_NAME)"
@@ -5794,7 +5848,7 @@ function New-SectionHTML {
                     $details = "Precision: $($item.precision), Scale: $($item.scale) $viewDetailsBtn"
                 } elseif ($SectionName -eq "Constraints") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.CONSTRAINT_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-constraint='$($item.CONSTRAINT_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-type='$($item.CONSTRAINT_TYPE)' data-target-type='$($item.CONSTRAINT_TYPE)' data-source-disabled='$($item.is_disabled)' data-target-disabled='$($item.is_disabled)' onclick='showConstraintCode(this)'>View Code</button>"
                     $details = "Type: $($item.CONSTRAINT_TYPE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Views") {
@@ -5804,23 +5858,23 @@ function New-SectionHTML {
                     $details = "Created: $($item.create_date) $viewCodeBtn"
                 } elseif ($SectionName -eq "Synonyms") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.SYNONYM_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-synonym='$($item.SYNONYM_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-base-object='$($item.base_object_name)' data-target-base-object='$($item.base_object_name)' onclick='showSynonymCode(this)'>View Code</button>"
                     $details = "Base Object: $($item.base_object_name) $viewCodeBtn"
                 } elseif ($SectionName -eq "Table Triggers") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.TRIGGER_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $triggerType = if ($item.is_instead_of_trigger) { "INSTEAD OF" } else { "AFTER" }
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-trigger='$($item.TRIGGER_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-disabled='$($item.is_disabled)' data-target-disabled='$($item.is_disabled)' data-source-instead-of='$($item.is_instead_of_trigger)' data-target-instead-of='$($item.is_instead_of_trigger)' onclick='showTableTriggerCode(this)'>View Code</button>"
                     $details = "Type: $triggerType, Disabled: $($item.is_disabled) $viewCodeBtn"
                 } elseif ($SectionName -eq "Database Triggers") {
                     $objectName = "$($item.TRIGGER_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-trigger='$($item.TRIGGER_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-disabled='$($item.is_disabled)' data-target-disabled='$($item.is_disabled)' onclick='showDatabaseTriggerCode(this)'>View Code</button>"
                     $details = "Disabled: $($item.is_disabled) $viewCodeBtn"
                 } elseif ($SectionName -eq "Keys") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.KEY_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-key='$($item.KEY_NAME)' data-source-code='$createStatement' data-target-code='$createStatement' data-source-key-type='$($item.KEY_TYPE)' data-target-key-type='$($item.KEY_TYPE)' data-source-is-primary='$($item.is_primary_key)' data-target-is-primary='$($item.is_primary_key)' data-source-is-unique='$($item.is_unique)' data-target-is-unique='$($item.is_unique)' onclick='showKeyCode(this)'>View Code</button>"
                     $details = "Type: $($item.KEY_TYPE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Database Options") {
@@ -5843,7 +5897,7 @@ function New-SectionHTML {
                     }
                 } elseif ($SectionName -eq "File Information") {
                     $objectName = $item.name
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-file='$($item.name)' data-source-create='$createStatement' data-target-create='' data-source-type='$($item.type_desc)' data-target-type='' data-source-size='$($item.size_mb)' data-target-size='' data-source-filegroup='$($item.filegroup_name)' data-target-filegroup='' onclick='showFileCode(this)'>View Code</button>"
                     $details = "Type: $($item.type_desc), Size: $($item.size_mb) MB, Filegroup: $($item.filegroup_name), Growth: $($item.growth_display), Max Size: $($item.max_size_display) $viewCodeBtn"
                 } elseif ($SectionName -eq "VLF Information") {
@@ -5879,12 +5933,12 @@ function New-SectionHTML {
                     }
                 } elseif ($SectionName -eq "Users") {
                     $objectName = $item.USER_NAME
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-user='$($item.USER_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-type='$($item.USER_TYPE)' data-target-type='$($item.USER_TYPE)' data-source-roles='$($item.ROLE_MEMBERSHIPS)' data-target-roles='$($item.ROLE_MEMBERSHIPS)' onclick='showUserCode(this)'>View Code</button>"
                     $details = "Type: $($item.USER_TYPE), Roles: $($item.ROLE_MEMBERSHIPS), Permissions: $($item.SECURABLES_PERMISSIONS) $viewCodeBtn"
                 } elseif ($SectionName -eq "Roles") {
                     $objectName = $item.ROLE_NAME
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-role='$($item.ROLE_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-type='$($item.ROLE_TYPE)' data-target-type='$($item.ROLE_TYPE)' data-source-members='$($item.ROLE_MEMBERS)' data-target-members='$($item.ROLE_MEMBERS)' onclick='showRoleCode(this)'>View Code</button>"
                     $details = "Type: $($item.ROLE_TYPE), Members: $($item.ROLE_MEMBERS), Permissions: $($item.ROLE_PERMISSIONS) $viewCodeBtn"
                 } elseif ($SectionName -eq "VLF Information") {
@@ -5939,17 +5993,17 @@ function New-SectionHTML {
                     }
                 } elseif ($SectionName -eq "Tables") {
                     $objectName = "$($item.TABLE_SCHEMA).$($item.TABLE_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.TABLE_SCHEMA)' data-table='$($item.TABLE_NAME)' data-source-create='$createStatement' data-target-create='' data-source-create-date='$($item.create_date)' data-target-create-date='' data-source-modify-date='$($item.modify_date)' data-target-modify-date='' data-source-row-count='$($item.ROW_COUNT)' data-target-row-count='' onclick='showTableCode(this)'>View Code</button>"
                     $details = "Type: $($item.TABLE_TYPE), Rows: $($item.ROW_COUNT) $viewCodeBtn"
                 } elseif ($SectionName -eq "Columns") {
                     $objectName = "$($item.TABLE_SCHEMA).$($item.TABLE_NAME).$($item.COLUMN_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.TABLE_SCHEMA)' data-table='$($item.TABLE_NAME)' data-column='$($item.COLUMN_NAME)' data-source-create='$createStatement' data-target-create='' data-source-datatype='$($item.DATA_TYPE)' data-target-datatype='' data-source-nullable='$($item.IS_NULLABLE)' data-target-nullable='' onclick='showColumnCode(this)'>View Code</button>"
                     $details = "Type: $($item.DATA_TYPE), Nullable: $($item.IS_NULLABLE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Indexes") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.INDEX_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-index='$($item.INDEX_NAME)' data-source-create='$createStatement' data-target-create='' data-source-index-type='$($item.INDEX_TYPE)' data-target-index-type='' data-source-is-unique='$($item.is_unique)' data-target-is-unique='' onclick='showIndexCode(this)'>View Code</button>"
                     $details = "Type: $($item.INDEX_TYPE), Unique: $($item.is_unique), Columns: [$($item.INDEX_COLUMNS)] $viewCodeBtn"
                 } elseif ($SectionName -eq "Functions") {
@@ -5962,7 +6016,7 @@ function New-SectionHTML {
                     $objectName = "$($item.SCHEMA_NAME).$($item.PROCEDURE_NAME)"
                     $procDef = [System.Web.HttpUtility]::HtmlEncode($item.definition)
                     $procDef = ($procDef -replace '"', '&quot;' -replace "'", '&#39;')
-                    $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.PROCEDURE_NAME)' data-source-code='$procDef' data-target-code='' onclick='showFunctionCodeFromData(this)'>View Code</button>"
+                    $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.PROCEDURE_NAME)' data-object-type='Stored Procedure' data-source-code='$procDef' data-target-code='' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Created: $($item.create_date) $viewCodeBtn"
                 } elseif ($SectionName -eq "Data Types") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TYPE_NAME)"
@@ -5972,7 +6026,7 @@ function New-SectionHTML {
                     $details = "Precision: $($item.precision), Scale: $($item.scale) $viewDetailsBtn"
                 } elseif ($SectionName -eq "Constraints") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.CONSTRAINT_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-constraint='$($item.CONSTRAINT_NAME)' data-source-create='$createStatement' data-target-create='' data-source-type='$($item.CONSTRAINT_TYPE)' data-target-type='' data-source-disabled='$($item.is_disabled)' data-target-disabled='' onclick='showConstraintCode(this)'>View Code</button>"
                     $details = "Type: $($item.CONSTRAINT_TYPE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Views") {
@@ -5982,23 +6036,23 @@ function New-SectionHTML {
                     $details = "Created: $($item.create_date) $viewCodeBtn"
                 } elseif ($SectionName -eq "Synonyms") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.SYNONYM_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-synonym='$($item.SYNONYM_NAME)' data-source-create='$createStatement' data-target-create='' data-source-base-object='$($item.base_object_name)' data-target-base-object='' onclick='showSynonymCode(this)'>View Code</button>"
                     $details = "Base Object: $($item.base_object_name) $viewCodeBtn"
                 } elseif ($SectionName -eq "Table Triggers") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.TRIGGER_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $triggerType = if ($item.is_instead_of_trigger) { "INSTEAD OF" } else { "AFTER" }
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-trigger='$($item.TRIGGER_NAME)' data-source-create='$createStatement' data-target-create='' data-source-disabled='$($item.is_disabled)' data-target-disabled='' data-source-instead-of='$($item.is_instead_of_trigger)' data-target-instead-of='' onclick='showTableTriggerCode(this)'>View Code</button>"
                     $details = "Type: $triggerType, Disabled: $($item.is_disabled) $viewCodeBtn"
                 } elseif ($SectionName -eq "Database Triggers") {
                     $objectName = "$($item.TRIGGER_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-trigger='$($item.TRIGGER_NAME)' data-source-create='$createStatement' data-target-create='' data-source-disabled='$($item.is_disabled)' data-target-disabled='' onclick='showDatabaseTriggerCode(this)'>View Code</button>"
                     $details = "Disabled: $($item.is_disabled) $viewCodeBtn"
                 } elseif ($SectionName -eq "Keys") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.KEY_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-key='$($item.KEY_NAME)' data-source-code='$createStatement' data-target-code='' data-source-key-type='$($item.KEY_TYPE)' data-target-key-type='' data-source-is-primary='$($item.is_primary_key)' data-target-is-primary='' data-source-is-unique='$($item.is_unique)' data-target-is-unique='' onclick='showKeyCode(this)'>View Code</button>"
                     $details = "Type: $($item.KEY_TYPE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Database Options") {
@@ -6008,7 +6062,7 @@ function New-SectionHTML {
                     $details = "Value: $($item.OPTION_VALUE) $viewCodeBtn"
                 } elseif ($SectionName -eq "File Information") {
                     $objectName = $item.name
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-file='$($item.name)' data-source-create='' data-target-create='$createStatement' data-source-type='' data-target-type='$($item.type_desc)' data-source-size='' data-target-size='$($item.size_mb)' data-source-filegroup='' data-target-filegroup='$($item.filegroup_name)' onclick='showFileCode(this)'>View Code</button>"
                     $details = "Type: $($item.type_desc), Size: $($item.size_mb) MB, Filegroup: $($item.filegroup_name), Growth: $($item.growth_display), Max Size: $($item.max_size_display) $viewCodeBtn"
                 } elseif ($SectionName -eq "VLF Information") {
@@ -6021,12 +6075,12 @@ function New-SectionHTML {
                     $details = "Principal Id: $($item.PRINCIPAL_ID), Created: $($item.create_date), Modified: $($item.modify_date)"
                 } elseif ($SectionName -eq "Users") {
                     $objectName = $item.USER_NAME
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-user='$($item.USER_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-type='$($item.USER_TYPE)' data-target-type='$($item.USER_TYPE)' data-source-roles='$($item.ROLE_MEMBERSHIPS)' data-target-roles='$($item.ROLE_MEMBERSHIPS)' onclick='showUserCode(this)'>View Code</button>"
                     $details = "Type: $($item.USER_TYPE), Roles: $($item.ROLE_MEMBERSHIPS), Permissions: $($item.SECURABLES_PERMISSIONS) $viewCodeBtn"
                 } elseif ($SectionName -eq "Roles") {
                     $objectName = $item.ROLE_NAME
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-role='$($item.ROLE_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-type='$($item.ROLE_TYPE)' data-target-type='$($item.ROLE_TYPE)' data-source-members='$($item.ROLE_MEMBERS)' data-target-members='$($item.ROLE_MEMBERS)' onclick='showRoleCode(this)'>View Code</button>"
                     $details = "Type: $($item.ROLE_TYPE), Members: $($item.ROLE_MEMBERS), Permissions: $($item.ROLE_PERMISSIONS) $viewCodeBtn"
                 }
@@ -6059,17 +6113,17 @@ function New-SectionHTML {
                 # Extract object name based on section type (same logic as above)
                 if ($SectionName -eq "Tables") {
                     $objectName = "$($item.TABLE_SCHEMA).$($item.TABLE_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.TABLE_SCHEMA)' data-table='$($item.TABLE_NAME)' data-source-create='' data-target-create='$createStatement' data-source-create-date='' data-target-create-date='$($item.create_date)' data-source-modify-date='' data-target-modify-date='$($item.modify_date)' data-source-row-count='' data-target-row-count='$($item.ROW_COUNT)' onclick='showTableCode(this)'>View Code</button>"
                     $details = "Type: $($item.TABLE_TYPE), Rows: $($item.ROW_COUNT) $viewCodeBtn"
                 } elseif ($SectionName -eq "Columns") {
                     $objectName = "$($item.TABLE_SCHEMA).$($item.TABLE_NAME).$($item.COLUMN_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.TABLE_SCHEMA)' data-table='$($item.TABLE_NAME)' data-column='$($item.COLUMN_NAME)' data-source-create='' data-target-create='$createStatement' data-source-datatype='' data-target-datatype='$($item.DATA_TYPE)' data-source-nullable='' data-target-nullable='$($item.IS_NULLABLE)' onclick='showColumnCode(this)'>View Code</button>"
                     $details = "Type: $($item.DATA_TYPE), Nullable: $($item.IS_NULLABLE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Indexes") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.INDEX_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-index='$($item.INDEX_NAME)' data-source-create='' data-target-create='$createStatement' data-source-index-type='' data-target-index-type='$($item.INDEX_TYPE)' data-source-is-unique='' data-target-is-unique='$($item.is_unique)' onclick='showIndexCode(this)'>View Code</button>"
                     $details = "Type: $($item.INDEX_TYPE), Unique: $($item.is_unique), Columns: [$($item.INDEX_COLUMNS)] $viewCodeBtn"
                 } elseif ($SectionName -eq "Query Store") {
@@ -6097,7 +6151,7 @@ function New-SectionHTML {
                     $objectName = "$($item.SCHEMA_NAME).$($item.PROCEDURE_NAME)"
                     $procDef = [System.Web.HttpUtility]::HtmlEncode($item.definition)
                     $procDef = ($procDef -replace '"', '&quot;' -replace "'", '&#39;')
-                    $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.PROCEDURE_NAME)' data-source-code='' data-target-code='$procDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
+                    $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-function='$($item.PROCEDURE_NAME)' data-object-type='Stored Procedure' data-source-code='' data-target-code='$procDef' onclick='showFunctionCodeFromData(this)'>View Code</button>"
                     $details = "Created: $($item.create_date) $viewCodeBtn"
                 } elseif ($SectionName -eq "Data Types") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TYPE_NAME)"
@@ -6107,7 +6161,7 @@ function New-SectionHTML {
                     $details = "Precision: $($item.precision), Scale: $($item.scale) $viewDetailsBtn"
                 } elseif ($SectionName -eq "Constraints") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.CONSTRAINT_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-constraint='$($item.CONSTRAINT_NAME)' data-source-create='' data-target-create='$createStatement' data-source-type='' data-target-type='$($item.CONSTRAINT_TYPE)' data-source-disabled='' data-target-disabled='$($item.is_disabled)' onclick='showConstraintCode(this)'>View Code</button>"
                     $details = "Type: $($item.CONSTRAINT_TYPE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Views") {
@@ -6117,23 +6171,23 @@ function New-SectionHTML {
                     $details = "Created: $($item.create_date) $viewCodeBtn"
                 } elseif ($SectionName -eq "Synonyms") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.SYNONYM_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-synonym='$($item.SYNONYM_NAME)' data-source-create='' data-target-create='$createStatement' data-source-base-object='' data-target-base-object='$($item.base_object_name)' onclick='showSynonymCode(this)'>View Code</button>"
                     $details = "Base Object: $($item.base_object_name) $viewCodeBtn"
                 } elseif ($SectionName -eq "Table Triggers") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.TRIGGER_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $triggerType = if ($item.is_instead_of_trigger) { "INSTEAD OF" } else { "AFTER" }
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-trigger='$($item.TRIGGER_NAME)' data-source-create='' data-target-create='$createStatement' data-source-disabled='' data-target-disabled='$($item.is_disabled)' data-source-instead-of='' data-target-instead-of='$($item.is_instead_of_trigger)' onclick='showTableTriggerCode(this)'>View Code</button>"
                     $details = "Type: $triggerType, Disabled: $($item.is_disabled) $viewCodeBtn"
                 } elseif ($SectionName -eq "Database Triggers") {
                     $objectName = "$($item.TRIGGER_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-trigger='$($item.TRIGGER_NAME)' data-source-create='' data-target-create='$createStatement' data-source-disabled='' data-target-disabled='$($item.is_disabled)' onclick='showDatabaseTriggerCode(this)'>View Code</button>"
                     $details = "Disabled: $($item.is_disabled) $viewCodeBtn"
                 } elseif ($SectionName -eq "Keys") {
                     $objectName = "$($item.SCHEMA_NAME).$($item.TABLE_NAME).$($item.KEY_NAME)"
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-schema='$($item.SCHEMA_NAME)' data-table='$($item.TABLE_NAME)' data-key='$($item.KEY_NAME)' data-source-code='' data-target-code='$createStatement' data-source-key-type='' data-target-key-type='$($item.KEY_TYPE)' data-source-is-primary='' data-target-is-primary='$($item.is_primary_key)' data-source-is-unique='' data-target-is-unique='$($item.is_unique)' onclick='showKeyCode(this)'>View Code</button>"
                     $details = "Type: $($item.KEY_TYPE) $viewCodeBtn"
                 } elseif ($SectionName -eq "Database Options") {
@@ -6143,7 +6197,7 @@ function New-SectionHTML {
                     $details = "Value: $($item.OPTION_VALUE) $viewCodeBtn"
                 } elseif ($SectionName -eq "File Information") {
                     $objectName = $item.name
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-file='$($item.name)' data-source-create='' data-target-create='$createStatement' data-source-type='' data-target-type='$($item.type_desc)' data-source-size='' data-target-size='$($item.size_mb)' data-source-filegroup='' data-target-filegroup='$($item.filegroup_name)' onclick='showFileCode(this)'>View Code</button>"
                     $details = "Type: $($item.type_desc), Size: $($item.size_mb) MB, Filegroup: $($item.filegroup_name), Growth: $($item.growth_display), Max Size: $($item.max_size_display) $viewCodeBtn"
                 } elseif ($SectionName -eq "VLF Information") {
@@ -6156,12 +6210,12 @@ function New-SectionHTML {
                     $details = "Principal Id: $($item.PRINCIPAL_ID), Created: $($item.create_date), Modified: $($item.modify_date)"
                 } elseif ($SectionName -eq "Users") {
                     $objectName = $item.USER_NAME
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-user='$($item.USER_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-type='$($item.USER_TYPE)' data-target-type='$($item.USER_TYPE)' data-source-roles='$($item.ROLE_MEMBERSHIPS)' data-target-roles='$($item.ROLE_MEMBERSHIPS)' onclick='showUserCode(this)'>View Code</button>"
                     $details = "Type: $($item.USER_TYPE), Roles: $($item.ROLE_MEMBERSHIPS), Permissions: $($item.SECURABLES_PERMISSIONS) $viewCodeBtn"
                 } elseif ($SectionName -eq "Roles") {
                     $objectName = $item.ROLE_NAME
-                    $createStatement = [System.Web.HttpUtility]::HtmlEncode($item.CREATE_STATEMENT)
+                    $createStatement = [System.Web.HttpUtility]::HtmlEncode(($item.CREATE_STATEMENT -replace "`r", ""))
                     $viewCodeBtn = "<button class='view-code-btn' data-role='$($item.ROLE_NAME)' data-source-create='$createStatement' data-target-create='$createStatement' data-source-type='$($item.ROLE_TYPE)' data-target-type='$($item.ROLE_TYPE)' data-source-members='$($item.ROLE_MEMBERS)' data-target-members='$($item.ROLE_MEMBERS)' onclick='showRoleCode(this)'>View Code</button>"
                     $details = "Type: $($item.ROLE_TYPE), Members: $($item.ROLE_MEMBERS), Permissions: $($item.ROLE_PERMISSIONS) $viewCodeBtn"
                 }
@@ -6792,7 +6846,7 @@ Write-Host "`nPerforming comparisons..." -ForegroundColor Yellow
 # Compare tables and columns
 if ($sourceTables -and $targetTables) {
     Write-Host "Comparing tables..." -ForegroundColor Yellow
-$global:ComparisonData.Tables = Compare-Datasets -Source $sourceTables -Target $targetTables -KeyColumns "TABLE_SCHEMA,TABLE_NAME"
+$global:ComparisonData.Tables = Compare-Datasets -Source $sourceTables -Target $targetTables -KeyColumns "TABLE_SCHEMA,TABLE_NAME" -IgnoreColumns "create_date,modify_date"
     
     Write-Host "Table comparison results:" -ForegroundColor Cyan
     Write-Host "  Matches: $($global:ComparisonData.Tables.Matches.Count)" -ForegroundColor Green
@@ -6886,7 +6940,7 @@ if ($sourceSchemas -or $targetSchemas) {
 # Compare functions
 if ($sourceFunctions -and $targetFunctions) {
     Write-Host "Comparing functions..." -ForegroundColor Yellow
-$global:ComparisonData.Functions = Compare-Datasets -Source $sourceFunctions -Target $targetFunctions -KeyColumns "SCHEMA_NAME,FUNCTION_NAME"
+$global:ComparisonData.Functions = Compare-Datasets -Source $sourceFunctions -Target $targetFunctions -KeyColumns "SCHEMA_NAME,FUNCTION_NAME" -IgnoreColumns "create_date,modify_date"
     
     Write-Host "Function comparison results:" -ForegroundColor Cyan
     Write-Host "  Matches: $($global:ComparisonData.Functions.Matches.Count)" -ForegroundColor Green
@@ -6908,7 +6962,7 @@ $global:ComparisonData.Functions = Compare-Datasets -Source $sourceFunctions -Ta
 # Compare stored procedures
 if ($sourceProcedures -and $targetProcedures) {
     Write-Host "Comparing stored procedures..." -ForegroundColor Yellow
-$global:ComparisonData.StoredProcedures = Compare-Datasets -Source $sourceProcedures -Target $targetProcedures -KeyColumns "SCHEMA_NAME,PROCEDURE_NAME"
+$global:ComparisonData.StoredProcedures = Compare-Datasets -Source $sourceProcedures -Target $targetProcedures -KeyColumns "SCHEMA_NAME,PROCEDURE_NAME" -IgnoreColumns "create_date,modify_date"
     
     Write-Host "Stored procedure comparison results:" -ForegroundColor Cyan
     Write-Host "  Matches: $($global:ComparisonData.StoredProcedures.Matches.Count)" -ForegroundColor Green
@@ -6973,7 +7027,7 @@ if ($sourceConstraints -and $targetConstraints) {
 # Compare views
 if ($sourceViews -and $targetViews) {
     Write-Host "Comparing views..." -ForegroundColor Yellow
-    $global:ComparisonData.Views = Compare-Datasets -Source $sourceViews -Target $targetViews -KeyColumns "SCHEMA_NAME,VIEW_NAME"
+    $global:ComparisonData.Views = Compare-Datasets -Source $sourceViews -Target $targetViews -KeyColumns "SCHEMA_NAME,VIEW_NAME" -IgnoreColumns "create_date,modify_date"
     
     Write-Host "View comparison results:" -ForegroundColor Cyan
     Write-Host "  Matches: $($global:ComparisonData.Views.Matches.Count)" -ForegroundColor Green
@@ -7017,7 +7071,7 @@ if ($sourceSynonyms -or $targetSynonyms) {
 # Compare table triggers
 if ($sourceTableTriggers -or $targetTableTriggers) {
     Write-Host "Comparing table triggers..." -ForegroundColor Yellow
-    $global:ComparisonData.TableTriggers = Compare-Datasets -Source $sourceTableTriggers -Target $targetTableTriggers -KeyColumns "SCHEMA_NAME,TABLE_NAME,TRIGGER_NAME"
+    $global:ComparisonData.TableTriggers = Compare-Datasets -Source $sourceTableTriggers -Target $targetTableTriggers -KeyColumns "SCHEMA_NAME,TABLE_NAME,TRIGGER_NAME" -IgnoreColumns "create_date,modify_date"
     
     Write-Host "Table trigger comparison results:" -ForegroundColor Cyan
     Write-Host "  Matches: $($global:ComparisonData.TableTriggers.Matches.Count)" -ForegroundColor Green
@@ -7039,7 +7093,7 @@ if ($sourceTableTriggers -or $targetTableTriggers) {
 # Compare database triggers
 if ($sourceDatabaseTriggers -or $targetDatabaseTriggers) {
     Write-Host "Comparing database triggers..." -ForegroundColor Yellow
-    $global:ComparisonData.DatabaseTriggers = Compare-Datasets -Source $sourceDatabaseTriggers -Target $targetDatabaseTriggers -KeyColumns "TRIGGER_NAME"
+    $global:ComparisonData.DatabaseTriggers = Compare-Datasets -Source $sourceDatabaseTriggers -Target $targetDatabaseTriggers -KeyColumns "TRIGGER_NAME" -IgnoreColumns "create_date,modify_date"
     
     Write-Host "Database trigger comparison results:" -ForegroundColor Cyan
     Write-Host "  Matches: $($global:ComparisonData.DatabaseTriggers.Matches.Count)" -ForegroundColor Green
