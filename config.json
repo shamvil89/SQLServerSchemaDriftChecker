@@ -1,0 +1,58 @@
+{
+    "databaseConfigurations":  [
+                                   {
+                                       "sourceDatabase":  "TestSourceDB",
+                                       "name":  "Local Development Environment",
+                                       "targetServer":  "localhost",
+                                       "description":  "Compare local SQL Server databases using Windows Authentication",
+                                       "sourceServer":  "localhost",
+                                       "targetDatabase":  "TestTargetDB",
+                                       "authType":  "TrustedConnection"
+                                   },
+                                   {
+                                       "name":  "Cross Database Test",
+                                       "description":  "Compare two different existing databases",
+                                       "sourceServer":  "localhost",
+                                       "sourceDatabase":  "test",
+                                       "targetServer":  "localhost",
+                                       "targetDatabase":  "test2",
+                                       "authType":  "TrustedConnection"
+                                   },
+                                   {
+                                       "name":  "SQL Auth Example",
+                                       "description":  "Example configuration using SQL Server authentication",
+                                       "sourceServer":  "localhost",
+                                       "sourceDatabase":  "TestSourceDB",
+                                       "targetServer":  "localhost",
+                                       "targetDatabase":  "TestTargetDB",
+                                       "authType":  "SqlAuth",
+                                       "sourceUsername":  "myuser",
+                                       "sourcePassword":  "mypassword",
+                                       "targetUsername":  "myuser",
+                                       "targetPassword":  "mypassword"
+                                   },
+                                   {
+                                       "name":  "Azure SQL Database Example",
+                                       "description":  "Example configuration for Azure SQL Database with Azure AD authentication",
+                                       "sourceServer":  "myserver.database.windows.net",
+                                       "sourceDatabase":  "SourceDB",
+                                       "targetServer":  "myserver.database.windows.net",
+                                       "targetDatabase":  "TargetDB",
+                                       "authType":  "AzureAD"
+                                   },
+                                   {
+                                       "name":  "Hybrid Cloud Example",
+                                       "description":  "Example of on-premises to Azure SQL Database comparison",
+                                       "sourceServer":  "localhost",
+                                       "sourceDatabase":  "TestTargetDB",
+                                       "targetServer":  "shamvil.database.windows.net",
+                                       "targetDatabase":  "Black",
+                                       "authType":  "Mixed",
+                                       "sourceAuthType":  "TrustedConnection",
+                                       "targetAuthType":  "SQLAuth",
+                                       "targetUsername":  "USR",
+                                       "targetPassword":  "PWD"
+                                   }
+                               ]
+}
+
