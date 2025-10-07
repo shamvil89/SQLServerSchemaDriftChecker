@@ -6755,12 +6755,14 @@ if ($targetIndexes) {
     Write-Host "Target indexes count: $($targetIndexes.Rows.Count)" -ForegroundColor Magenta
 }
 
-Write-Host "Source functions type: $($sourceFunctions.GetType().Name)" -ForegroundColor Magenta
-Write-Host "Target functions type: $($targetFunctions.GetType().Name)" -ForegroundColor Magenta
-if ($sourceFunctions) {
+${srcFuncType} = if ($null -eq $sourceFunctions) { 'null' } else { $sourceFunctions.GetType().Name }
+${tgtFuncType} = if ($null -eq $targetFunctions) { 'null' } else { $targetFunctions.GetType().Name }
+Write-Host "Source functions type: ${srcFuncType}" -ForegroundColor Magenta
+Write-Host "Target functions type: ${tgtFuncType}" -ForegroundColor Magenta
+if ($sourceFunctions -and $sourceFunctions.PSObject.Properties["Rows"]) {
     Write-Host "Source functions count: $($sourceFunctions.Rows.Count)" -ForegroundColor Magenta
 }
-if ($targetFunctions) {
+if ($targetFunctions -and $targetFunctions.PSObject.Properties["Rows"]) {
     Write-Host "Target functions count: $($targetFunctions.Rows.Count)" -ForegroundColor Magenta
 }
 

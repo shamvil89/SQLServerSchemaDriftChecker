@@ -9,11 +9,14 @@ param(
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# Improve rendering on high-DPI/remote sessions
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
 # Global variables
 $script:Configurations = @()
 $script:SelectedConfig = $null
 
-function Load-Configurations {
+function Import-Configurations {
     try {
         if (Test-Path $ConfigPath) {
             $configContent = Get-Content $ConfigPath -Raw | ConvertFrom-Json
@@ -192,7 +195,7 @@ function Show-AuthDialog {
 }
 
 # Main execution
-if (Load-Configurations) {
+if (Import-Configurations) {
     # Create the main form
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Database Schema Drift Detection - Configuration"
@@ -201,6 +204,8 @@ if (Load-Configurations) {
     $form.FormBorderStyle = "FixedSingle"
     $form.MaximizeBox = $false
     $form.MinimizeBox = $true
+    $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+    $form.AutoScaleDimensions = New-Object System.Drawing.SizeF(96,96)
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $form.BackColor = [System.Drawing.Color]::FromArgb(30,30,30)
     $form.ForeColor = [System.Drawing.Color]::FromArgb(220,220,220)
@@ -454,30 +459,7 @@ if (Load-Configurations) {
 
     $btnGenerateCli.Add_Click({
         try {
-            # Build inline JSON content for -ConfigFile parameter
-            # Reconstruct current temp config to avoid null reference
-            $selectedConfig = $script:Configurations[$cmbScenario.SelectedIndex]
-            $tempConfigLocal = @{
-                databaseConfigurations = @(
-                    @{
-                        name = $selectedConfig.name
-                        description = $selectedConfig.description
-                        sourceServer = $txtSourceServer.Text
-                        sourceDatabase = $txtSourceDB.Text
-                        targetServer = $txtTargetServer.Text
-                        targetDatabase = $txtTargetDB.Text
-                        authType = if ($SourceAuth.Type -eq $TargetAuth.Type) { $SourceAuth.Type } else { "Mixed" }
-                        sourceAuthType = $SourceAuth.Type
-                        targetAuthType = $TargetAuth.Type
-                        sourceUsername = $SourceAuth.Username
-                        sourcePassword = $SourceAuth.Password
-                        targetUsername = $TargetAuth.Username
-                        targetPassword = $TargetAuth.Password
-                    }
-                )
-            }
-            $json = ($tempConfigLocal | ConvertTo-Json -Depth 10 -Compress)
-            # Prefer direct parameters for TrustedConnection; if any SqlAuth selected, emit inline-JSON command
+            # Build CLI command with direct parameters
             $switches = @()
             if ($chkMultiPage.Checked) { $switches += "-MultiPage" }
             if ($chkExportExcel.Checked) { $switches += "-ExportExcel" }
