@@ -21,7 +21,29 @@ param(
     [string]$TargetDatabase,
     
     [Parameter(Mandatory=$false)]
-    [string]$OutputPath = ".\SchemaComparisonReport.html"
+    [string]$OutputPath = ".\SchemaComparisonReport.html",
+    
+    # Optional direct authentication parameters (avoid JSON)
+    [Parameter(Mandatory=$false)]
+    [ValidateSet('TrustedConnection','SqlAuth','AzureAD')]
+    [string]$SourceAuthType,
+    [Parameter(Mandatory=$false)]
+    [string]$SourceUsername,
+    [Parameter(Mandatory=$false)]
+    [string]$SourcePassword,
+    [Parameter(Mandatory=$false)]
+    [ValidateSet('TrustedConnection','SqlAuth','AzureAD')]
+    [string]$TargetAuthType,
+    [Parameter(Mandatory=$false)]
+    [string]$TargetUsername,
+    [Parameter(Mandatory=$false)]
+    [string]$TargetPassword,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$MultiPage,
+    
+    [Parameter(Mandatory=$false)]
+    [switch]$ExportExcel
 )
 
 # Function to clear all cached variables and ensure clean state
@@ -64,14 +86,20 @@ if (-not (Get-Module SqlServer)) {
 
 # Load configuration from JSON file if no direct parameters are provided
 if (-not $SourceServer -or -not $SourceDatabase -or -not $TargetServer -or -not $TargetDatabase) {
-    if (-not (Test-Path $ConfigFile)) {
+    # Support either a file path or raw JSON string for -ConfigFile
+    $configContent = $null
+    if (Test-Path $ConfigFile) {
+        $configContent = Get-Content -Path $ConfigFile -Raw
+    } elseif ($ConfigFile -match '^\s*[\{\[]') {
+        # Inline JSON content passed directly
+        $configContent = $ConfigFile
+    } else {
         Write-Error "Configuration file not found: $ConfigFile"
         Write-Host "Please create a config.json file or provide direct parameters." -ForegroundColor Yellow
         exit 1
     }
     
     try {
-        $configContent = Get-Content -Path $ConfigFile -Raw
         $config = $configContent | ConvertFrom-Json
         
         # If ConfigName is specified, use that specific configuration
@@ -122,15 +150,17 @@ if (-not $SourceServer -or -not $SourceDatabase -or -not $TargetServer -or -not 
 }
 else {
     Write-Host "Using direct parameters (JSON config overridden)" -ForegroundColor Yellow
-    # Initialize default auth config for direct parameters
+    # Initialize auth config from CLI if provided (fallback to TrustedConnection)
+    $srcAuth = if ($SourceAuthType) { $SourceAuthType } else { "TrustedConnection" }
+    $tgtAuth = if ($TargetAuthType) { $TargetAuthType } else { "TrustedConnection" }
     $global:AuthConfig = @{
-        AuthType = "TrustedConnection"
-        SourceAuthType = "TrustedConnection"
-        TargetAuthType = "TrustedConnection"
-        SourceUsername = $null
-        SourcePassword = $null
-        TargetUsername = $null
-        TargetPassword = $null
+        AuthType = if ($srcAuth -eq $tgtAuth) { $srcAuth } else { "Mixed" }
+        SourceAuthType = $srcAuth
+        TargetAuthType = $tgtAuth
+        SourceUsername = $SourceUsername
+        SourcePassword = $SourcePassword
+        TargetUsername = $TargetUsername
+        TargetPassword = $TargetPassword
     }
 }
 
@@ -180,7 +210,6 @@ $global:ComparisonData = @{
         Differences = @()
     }
 }
-
 # Function to execute SQL query and return results
 function Invoke-SqlQuery {
     param(
@@ -737,7 +766,6 @@ SELECT
 FROM sys.foreign_keys fk
 INNER JOIN sys.tables t ON fk.parent_object_id = t.object_id
 INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
-
 UNION ALL
 
 -- Indexes (non-key constraints)
@@ -921,7 +949,6 @@ FROM sys.database_scoped_configurations
     }
     return $result
 }
-
 function Convert-ArrayToDataTable {
     param([array]$InputArray)
     
@@ -1879,7 +1906,6 @@ function New-HTMLReport {
             transition: width 0.8s ease-out;
             z-index: 1;
         }
-        
         .breakdown-item.match .count {
             background: linear-gradient(135deg, #28a745 0%, #34ce57 100%);
             box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
@@ -2079,7 +2105,6 @@ function New-HTMLReport {
             font-size: 10px;
             padding: 2px 6px;
         }
-        
         .filter-stats {
             display: flex;
             align-items: center;
@@ -2276,7 +2301,6 @@ function New-HTMLReport {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-        
         .no-data {
             text-align: center;
             padding: 40px;
@@ -2856,7 +2880,6 @@ function New-HTMLReport {
                     </div>
                 </div>
             </div>
-            
             <div class="summary-card" onclick="selectAllFiltersAndShowAll('database-triggers')" oncontextmenu="return markSummarySelected(event, this, 'database-triggers')">
                 <div class="summary-header">
                     <h3>Database Triggers</h3>
@@ -3038,7 +3061,6 @@ function New-HTMLReport {
                     </div>
                 </div>
             </div>
-
             <div class="summary-card" onclick="selectAllFiltersAndShowAll('External Resources')" oncontextmenu="return markSummarySelected(event, this, 'External Resources')">
                 <div class="summary-header">
                     <h3>External Resources</h3>
@@ -3240,19 +3262,16 @@ function New-HTMLReport {
                 applyFilters(sectionId);
             });
         }
-        
         // Initialize page
         document.addEventListener('DOMContentLoaded', function() {
             // Add click handlers to section headers (for summary card navigation)
-            document.querySelectorAll('.section-header').forEach(header => {
-                header.addEventListener('click', function(event) {    
-                    // Don't toggle if clicking on the toggle button (it handles itself)
-                    if (event.target.classList.contains('toggle')) {
-                        return;
-                    }
-                    const sectionId = this.id.replace('-header', '');
-                    toggleSection(sectionId);
-                });
+            document.querySelectorAll('.section-header').forEach(header => {    
+                // Don't toggle if clicking on the toggle button (it handles itself)
+                if (event.target.classList.contains('toggle')) {
+                    return;
+                }
+                const sectionId = this.id.replace('-header', '');
+                toggleSection(sectionId);
             });
             
             // Setup filters
@@ -3427,7 +3446,6 @@ function New-HTMLReport {
                 sections.forEach(s => { if (!fragment.contains(s)) fragment.appendChild(s); });
                 secContainer.appendChild(fragment);
             }
-
             // When sorting by category for cards, also reorder sections to object → performance → configuration
             const _origSortByCategory = window.sortByCategory;
             window.sortCategoryAndSections = function(){
@@ -3602,8 +3620,6 @@ function New-HTMLReport {
                 if (targetActionBtn) { targetActionBtn.textContent = 'Copy'; targetActionBtn.onclick = function(){ copyCode('targetCodeBlock', targetActionBtn); }; }
 
                 if (sourceCode && sourceCode.trim() !== '' && targetCode && targetCode.trim() !== '') {
-                    console.log('Comparing code blocks - Source length:', sourceCode.length, 'Target length:', targetCode.length);
-                    console.log('Are they equal?', sourceCode === targetCode);
                     const diffResult = highlightCharacterDifferences(sourceCode, targetCode);
                     sourceCodeBlock.innerHTML = formatCodeWithLineNumbers(diffResult.source);
                     targetCodeBlock.innerHTML = formatCodeWithLineNumbers(diffResult.target);
@@ -3631,7 +3647,6 @@ function New-HTMLReport {
             // For very large files (> 1000 lines), use faster simple line-by-line comparison
             const MAX_LINES_FOR_LCS = 1000;
             if (sourceLines.length > MAX_LINES_FOR_LCS || targetLines.length > MAX_LINES_FOR_LCS) {
-                console.log('Using simple diff for large file:', sourceLines.length, 'lines');
                 return highlightDifferencesSimple(sourceLines, targetLines);
             }
             
@@ -3737,7 +3752,6 @@ function New-HTMLReport {
                 }
             }
             
-            console.log('Simple diff found', diffCount, 'different lines out of', maxLen, 'total lines');
             return {
                 source: sourceHtml,
                 target: targetHtml
@@ -3824,7 +3838,6 @@ function New-HTMLReport {
             
             return result;
         }
-        
         // Function to format code with line numbers
         function formatCodeWithLineNumbers(htmlContent) {
             const lines = htmlContent.split('\n');
@@ -4013,7 +4026,6 @@ function New-HTMLReport {
                 targetCodeBlock.innerHTML = formatCodeWithLineNumbers('<span style="color: #dc3545; font-style: italic;">Data type not found in target database</span>');
             }
         }
-        
         function generateCreateTypeStatement(schemaName, typeName, props) {
             // Parse properties
             const maxLength = props.find(p => p.startsWith('Max Length: '))?.split(': ')[1] || '0';
@@ -4184,7 +4196,6 @@ function New-HTMLReport {
             modal.style.display = 'block';
             document.body.style.overflow = 'hidden';
         }
-        
         function showIndexCode(button) {
             const schemaName = button.getAttribute('data-schema');
             const tableName = button.getAttribute('data-table');
@@ -4352,7 +4363,6 @@ function New-HTMLReport {
             modal.style.display = 'block';
             document.body.style.overflow = 'hidden';
         }
-        
         function showSynonymCode(button) {
             const schemaName = button.getAttribute('data-schema');
             const synonymName = button.getAttribute('data-synonym');
@@ -4515,7 +4525,6 @@ function New-HTMLReport {
             modal.style.display = 'block';
             document.body.style.overflow = 'hidden';
         }
-        
         function showKeyCode(button) {
             const schemaName = button.getAttribute('data-schema');
             const tableName = button.getAttribute('data-table');
@@ -4664,7 +4673,6 @@ function New-HTMLReport {
             modal.style.display = 'block';
             document.body.style.overflow = 'hidden';
         }
-        
         function showUserCode(button) {
             const userName = button.getAttribute('data-user');
             const sourceCreate = (button.getAttribute('data-source-create') || '').replace(/&#x0D;/g, '').replace(/\r/g, '');
@@ -4840,7 +4848,6 @@ function New-HTMLReport {
                 closeCodeModal();
             }
         });
-        
         // Function to toggle section collapse/expand
         function toggleSection(sectionId) {
             const content = document.getElementById(sectionId + '-content');
@@ -5034,7 +5041,6 @@ function New-HTMLReport {
             });
         });
     </script>
-    
     <!-- Include JSZip (dependency for ExcelJS in browsers) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <!-- Include ExcelJS for Excel export with styling support -->
@@ -5043,13 +5049,22 @@ function New-HTMLReport {
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script>
-        // Wait for ExcelJS library to load
-        function waitForExcelJS(callback) {
+        // Wait for ExcelJS library to load with timeout
+        function waitForExcelJS(callback, timeout = 30000) {
+            const startTime = Date.now();
+            
+            function check() {
             if (typeof ExcelJS !== 'undefined') {
                 callback();
+                } else if (Date.now() - startTime > timeout) {
+                    console.error('ExcelJS library failed to load within timeout period');
+                    alert('Error: Excel export library failed to load.\n\nPossible causes:\n1. No internet connection\n2. CDN blocked by firewall\n3. Network timeout\n\nPlease check your internet connection and try again.');
             } else {
-                setTimeout(() => waitForExcelJS(callback), 100);
+                    setTimeout(check, 100);
             }
+            }
+            
+            check();
         }
         
         // Export to Excel functionality - only expanded sections with ExcelJS
@@ -5177,7 +5192,6 @@ function New-HTMLReport {
                 sections.forEach(section => {
                     const content = section.querySelector('.section-content');
                     const sectionName = section.querySelector('h2').textContent;
-                    
                     // Only process expanded sections
                     if (content && content.classList.contains('expanded')) {
                         hasExpandedSections = true;
@@ -5333,7 +5347,6 @@ function New-HTMLReport {
                 });
             });
         }
-        
         // Export to PDF functionality - generate PDF directly with fallback
         function exportToPDF() {
             console.log('Starting PDF export...');
@@ -5440,6 +5453,90 @@ function New-HTMLReport {
                     document.head.removeChild(style);
                 }
             }, 500); // Give time for styles to apply
+        }
+        
+        // Auto-export functionality - triggered by URL parameter or global flag
+        function initAutoExport() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const autoExport = urlParams.get('autoExport') === 'true' || window.AUTO_EXPORT_MODE === true;
+            
+            console.log('Auto-export check:', {
+                urlParams: window.location.search,
+                autoExport: autoExport
+            });
+            
+            if (autoExport) {
+                console.log('%c AUTO-EXPORT MODE ACTIVATED ', 'background: #4CAF50; color: white; font-size: 16px; padding: 5px;');
+                
+                // Show visual indicator
+                const indicator = document.createElement('div');
+                indicator.style.cssText = 'position: fixed; top: 10px; right: 10px; background: #4CAF50; color: white; padding: 15px 25px; border-radius: 5px; z-index: 10000; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
+                indicator.innerHTML = 'Auto-exporting to Excel...<br><small>Please wait</small>';
+                document.body.appendChild(indicator);
+                
+                // Wait for all libraries to load with timeout handling
+                indicator.innerHTML = 'Loading Excel library...<br><small>Checking internet connection</small>';
+                
+                waitForExcelJS(() => {
+                    try {
+                        console.log('%c ExcelJS library loaded successfully ', 'background: #2196F3; color: white; padding: 3px;');
+                        indicator.innerHTML = 'Expanding all sections...<br><small>Step 1 of 2</small>';
+                        
+                        // Expand all sections
+                        const sections = document.querySelectorAll('.section');
+                        console.log('Found ' + sections.length + ' sections to expand');
+                        sections.forEach((section, index) => {
+                            const content = section.querySelector('.section-content');
+                            if (content && !content.classList.contains('expanded')) {
+                                content.classList.add('expanded');
+                                console.log('Expanded section ' + (index + 1));
+                            }
+                        });
+                        
+                        console.log('%c All sections expanded ', 'background: #FF9800; color: white; padding: 3px;');
+                        indicator.innerHTML = 'Generating Excel file...<br><small>Step 2 of 2</small>';
+                        
+                        // Wait a moment for sections to render, then export
+                        setTimeout(() => {
+                            try {
+                                console.log('%c Starting Excel export... ', 'background: #9C27B0; color: white; padding: 3px;');
+                                exportToExcel();
+                                
+                                // Update indicator
+                                indicator.innerHTML = 'Excel download started!<br><small>Check your downloads</small>';
+                                indicator.style.background = '#4CAF50';
+                                
+                                // Give time for download to complete, then notify completion
+                                setTimeout(() => {
+                                    console.log('%c AUTO-EXPORT COMPLETED ', 'background: #4CAF50; color: white; font-size: 16px; padding: 5px;');
+                                    document.title = 'EXPORT_COMPLETE';
+                                    indicator.innerHTML = 'Export complete!<br><small>You can close this tab</small>';
+                                    
+                                    // Auto-remove indicator after 5 seconds
+                                    setTimeout(() => {
+                                        indicator.remove();
+                                    }, 5000);
+                                }, 3000);
+                            } catch (error) {
+                                console.error('Error during Excel export:', error);
+                                indicator.innerHTML = 'Export failed!<br><small>' + error.message + '</small>';
+                                indicator.style.background = '#f44336';
+                            }
+                        }, 1000);
+                    } catch (error) {
+                        console.error('Error during auto-export:', error);
+                        indicator.innerHTML = 'Auto-export failed!<br><small>' + error.message + '</small>';
+                        indicator.style.background = '#f44336';
+                    }
+                }, 30000); // 30 second timeout
+            }
+        }
+        
+        // Run auto-export check when page loads
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initAutoExport);
+        } else {
+            initAutoExport();
         }
     </script>
 </body>
@@ -5797,7 +5894,6 @@ function New-SectionHTML {
                 $rowNumber++
             }
         }
-        
         # Process matches
         if ($Data.Matches) {
             foreach ($item in $Data.Matches) {
@@ -6548,7 +6644,6 @@ try {
     Write-Host "Error collecting target users: $($_.Exception.Message)" -ForegroundColor Red
     $targetUsers = $null
 }
-
 # Collect roles
 Write-Host "Collecting roles from source database..." -ForegroundColor Yellow
 try {
@@ -6846,7 +6941,7 @@ Write-Host "`nPerforming comparisons..." -ForegroundColor Yellow
 # Compare tables and columns
 if ($sourceTables -and $targetTables) {
     Write-Host "Comparing tables..." -ForegroundColor Yellow
-$global:ComparisonData.Tables = Compare-Datasets -Source $sourceTables -Target $targetTables -KeyColumns "TABLE_SCHEMA,TABLE_NAME" -IgnoreColumns "create_date,modify_date"
+$global:ComparisonData.Tables = Compare-Datasets -Source $sourceTables -Target $targetTables -KeyColumns "TABLE_SCHEMA,TABLE_NAME" -IgnoreColumns "create_date,modify_date,ROW_COUNT"
     
     Write-Host "Table comparison results:" -ForegroundColor Cyan
     Write-Host "  Matches: $($global:ComparisonData.Tables.Matches.Count)" -ForegroundColor Green
@@ -6936,7 +7031,6 @@ if ($sourceSchemas -or $targetSchemas) {
     Write-Host "Warning: Schemas data missing on source/target" -ForegroundColor Yellow
     $global:ComparisonData.Schemas = @{ Matches=@(); SourceOnly=@(); TargetOnly=@(); Differences=@() }
 }
-
 # Compare functions
 if ($sourceFunctions -and $targetFunctions) {
     Write-Host "Comparing functions..." -ForegroundColor Yellow
@@ -7291,7 +7385,6 @@ if ($sourceDatabaseOptions -or $targetDatabaseOptions) {
         TargetOnly = @()
         Differences = @()
     }
-    
     if ($sourceDatabaseOptions -and $targetDatabaseOptions) {
         # Create lookup tables for both source and target
         $sourceLookup = @{}
@@ -7376,22 +7469,1034 @@ if ($sourceDatabaseOptions -or $targetDatabaseOptions) {
 }
 
 
-# Generate HTML report
-Write-Host "`nGenerating HTML report..." -ForegroundColor Yellow
-$htmlReport = New-HTMLReport -SourceServer $SourceServer -SourceDatabase $SourceDatabase -TargetServer $TargetServer -TargetDatabase $TargetDatabase -OutputPath $OutputPath
+# Generate HTML report (skip if Excel-only export)
+if (-not $ExportExcel) {
+    Write-Host "`nGenerating HTML report..." -ForegroundColor Yellow
+    $htmlReport = New-HTMLReport -SourceServer $SourceServer -SourceDatabase $SourceDatabase -TargetServer $TargetServer -TargetDatabase $TargetDatabase -OutputPath $OutputPath
+
+    # Ensure sort buttons work even if primary scripts fail to bind (single-page fallback)
+    $singlePageFallback = @"
+
+<script>
+(function(){
+  function titleOf(card){
+    var h = card && card.querySelector && card.querySelector('.summary-header h3');
+    return (h && h.textContent ? h.textContent : '').toLowerCase();
+  }
+  function animateReorder(container, newOrder){
+    if(!container) return;
+    var D=500, easing='cubic-bezier(0.16, 1, 0.3, 1)';
+    var rects=new Map();
+    Array.prototype.forEach.call(container.children,function(el){
+      if(!(el instanceof HTMLElement)) return; rects.set(el, el.getBoundingClientRect());
+    });
+    // Build fragment for new order
+    var frag=document.createDocumentFragment(); newOrder.forEach(function(el){ frag.appendChild(el); });
+    container.appendChild(frag);
+    // Play FLIP
+    newOrder.forEach(function(el){
+      if(!(el instanceof HTMLElement)) return; var first=rects.get(el); var last=el.getBoundingClientRect();
+      if(!first) return; var dx=first.left-last.left, dy=first.top-last.top;
+      el.style.transform='translate('+dx+'px,'+dy+'px)'; el.style.transition='none';
+      requestAnimationFrame(function(){
+        el.style.transition='transform '+D+'ms '+easing+', opacity '+D+'ms '+easing;
+        el.style.transform='translate(0,0)';
+      });
+    });
+    setTimeout(function(){ newOrder.forEach(function(el){ el.style.transition=''; el.style.transform=''; }); }, D+20);
+  }
+  if (!window.sortAlphaAndSections){
+    window.sortAlphaAndSections = function(){
+      var c = document.getElementById('summaryCards');
+      if(!c) return;
+      var arr = Array.prototype.slice.call(c.getElementsByClassName('summary-card'));
+      arr.sort(function(a,b){ return titleOf(a).localeCompare(titleOf(b)); });
+      animateReorder(c, arr);
+      // Also alphabetize sections if present
+      var sec = document.getElementById('sectionsContainer');
+      if (sec){
+        var sections = Array.prototype.slice.call(sec.querySelectorAll('.section'));
+        sections.sort(function(a,b){
+          var at=(a.querySelector('.section-header h2')||{}).textContent||''; at=at.toLowerCase();
+          var bt=(b.querySelector('.section-header h2')||{}).textContent||''; bt=bt.toLowerCase();
+          return at.localeCompare(bt);
+        });
+        animateReorder(sec, sections);
+      }
+    }
+  }
+  if (!window.sortCategoryAndSections){
+    window.sortCategoryAndSections = function(){
+      var weights = { 'schemas':1,'tables':1,'columns':1,'indexes':1,'functions':1,'stored procedures':1,'stored-procedures':1,'views':1,'synonyms':1,'constraints':1,'keys':1,'table triggers':1,'database triggers':1,'query store':2,'vlf information':2,'database options':3,'file information':3,'users':3,'roles':3,'external resources':3,'data types':3 };
+      var c = document.getElementById('summaryCards'); if(!c) return;
+      var arr = Array.prototype.slice.call(c.getElementsByClassName('summary-card'));
+      arr.sort(function(a,b){
+        var at = titleOf(a), bt = titleOf(b);
+        var aw = (weights[at]!==undefined?weights[at]:99), bw = (weights[bt]!==undefined?weights[bt]:99);
+        if (aw !== bw) return aw - bw; return at.localeCompare(bt);
+      });
+      animateReorder(c, arr);
+      // Reorder sections by weight then A–Z
+      var sec = document.getElementById('sectionsContainer');
+      if (sec){
+        var sections = Array.prototype.slice.call(sec.querySelectorAll('.section'));
+        sections.sort(function(a,b){
+          var aw = +(a.getAttribute('data-category-weight')||99);
+          var bw = +(b.getAttribute('data-category-weight')||99);
+          if (aw!==bw) return aw-bw;
+          var at=(a.querySelector('.section-header h2')||{}).textContent||''; at=at.toLowerCase();
+          var bt=(b.querySelector('.section-header h2')||{}).textContent||''; bt=bt.toLowerCase();
+          return at.localeCompare(bt);
+        });
+        animateReorder(sec, sections);
+      }
+    }
+  }
+})();
+</script>
+"@
+    $htmlReport = $htmlReport -replace '</body>', ($singlePageFallback + '</body>')
+}
 
 # Save report
-$htmlReport | Out-File -FilePath $OutputPath -Encoding UTF8
+if ($ExportExcel) {
+    # Excel export: Direct export using ImportExcel module (no browser, no HTML)
+    Write-Host "`nExcel Export Mode: Creating Excel file directly from memory..." -ForegroundColor Yellow
+    
+    # Check if ImportExcel module is available
+    if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
+        Write-Host "ERROR: ImportExcel module not found!" -ForegroundColor Red
+        Write-Host "Installing ImportExcel module..." -ForegroundColor Yellow
+        Install-Module -Name ImportExcel -Scope CurrentUser -Force -AllowClobber
+    }
+    
+    Import-Module ImportExcel -ErrorAction Stop
+    
+    # Track used sheet names to avoid collisions and reserved names
+    $usedSheetNames = New-Object System.Collections.Generic.HashSet[string]
+    function Get-SafeSheetName {
+        param([string]$name)
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = 'Sheet' }
+        # Avoid problematic/reserved names
+        $reserved = @('Columns','Rows','Names')
+        if ($reserved -contains $name) { $name = "$name`Sheet" }
+        # Replace invalid chars and trim length
+        $safe = ($name -replace '[:\\/\?\*\[\]]', '_')
+        if ($safe.Length -gt 31) { $safe = $safe.Substring(0,31) }
+        # Ensure uniqueness by appending (n)
+        $base = $safe
+        $n = 1
+        while ($usedSheetNames.Contains($safe)) {
+            $suffix = " ($n)"
+            $maxBaseLen = 31 - $suffix.Length
+            if ($base.Length -gt $maxBaseLen) { $safe = $base.Substring(0,$maxBaseLen) + $suffix } else { $safe = $base + $suffix }
+            $n++
+        }
+        $usedSheetNames.Add($safe) | Out-Null
+        return $safe
+    }
 
-Write-Host "`nReport generated successfully!" -ForegroundColor Green
-Write-Host "Location: $OutputPath" -ForegroundColor Cyan
-Write-Host "`nOpening report in default browser..." -ForegroundColor Yellow
+    # Helpers: normalize complex objects for clean Excel output
+    function Clean-ExcelString {
+        param([string]$s)
+        if ($null -eq $s) { return "" }
+        # Remove control chars not allowed in XML (except TAB, LF, CR)
+        return ([regex]::Replace([string]$s, "[\x00-\x08\x0B\x0C\x0E-\x1F]", ""))
+    }
+    function Convert-ToPlainValue {
+        param(
+            $value,
+            [int]$depth = 0,
+            [int]$maxDepth = 2
+        )
+        if ($null -eq $value) { return "" }
+        if ($value -is [string]) { return (Clean-ExcelString $value) }
+        if ($value -is [bool]) { 
+            if ($value) { return "TRUE" } else { return "FALSE" }
+        }
+        if ($value -is [int] -or $value -is [long] -or $value -is [double] -or $value -is [decimal]) { return $value }
+        if ($value -is [datetime]) { return $value.ToString("yyyy-MM-dd HH:mm:ss") }
+        if ($depth -ge $maxDepth) { return ($value.ToString()) }
+        # Limit size for sequences to avoid hangs
+        if ($value -is [System.Collections.IEnumerable] -and -not ($value -is [string])) {
+            $limit = 50
+            $arr = @()
+            $count = 0
+            foreach ($i in $value) {
+                $arr += (Convert-ToPlainValue -value $i -depth ($depth + 1) -maxDepth $maxDepth)
+                $count++
+                if ($count -ge $limit) { break }
+            }
+            $suffix = if ($count -ge $limit) { " ..." } else { "" }
+            return (($arr -join ", ") + $suffix)
+        }
+        # For dictionaries or complex PSObjects, summarize key properties instead of full JSON
+        if ($value -is [System.Collections.IDictionary]) {
+            $pairs = @()
+            $i = 0
+            foreach ($k in $value.Keys) {
+                $pairs += ("" + $k + "=" + (Convert-ToPlainValue -value $value[$k] -depth ($depth + 1) -maxDepth $maxDepth))
+                $i++
+                if ($i -ge 20) { break }
+            }
+            return ($pairs -join "; ")
+        }
+        $props = $value.PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' -or $_.MemberType -eq 'Property' }
+        if ($props.Count -gt 0) {
+            $pairs = @()
+            $i = 0
+            foreach ($p in $props) {
+                $pairs += ("" + $p.Name + "=" + (Convert-ToPlainValue -value $p.Value -depth ($depth + 1) -maxDepth $maxDepth))
+                $i++
+                if ($i -ge 20) { break }
+            }
+            $s = ($pairs -join "; ")
+            if ($s.Length -gt 32000) { return ($s.Substring(0,32000) + "... [TRUNCATED]") }
+            return $s
+        }
+        return (Clean-ExcelString ($value.ToString()))
+    }
+    function Ensure-Worksheet {
+        param(
+            [string]$Path,
+            [string]$WorksheetName,
+            [string[]]$Headers
+        )
+        # Try via ImportExcel package APIs if available
+        try {
+            $openCmd = Get-Command Open-ExcelPackage -ErrorAction SilentlyContinue
+            $addCmd = Get-Command Add-Worksheet -ErrorAction SilentlyContinue
+            $saveCmd = Get-Command Save-ExcelPackage -ErrorAction SilentlyContinue
+            $closeCmd = Get-Command Close-ExcelPackage -ErrorAction SilentlyContinue
+            if ($openCmd -and $addCmd -and $saveCmd) {
+                $pkg = Open-ExcelPackage -Path $Path
+                if (-not ($pkg.Workbook.Worksheets[$WorksheetName])) {
+                    Add-Worksheet -ExcelPackage $pkg -WorksheetName $WorksheetName | Out-Null
+                    Save-ExcelPackage -ExcelPackage $pkg
+                }
+                if ($closeCmd) { Close-ExcelPackage $pkg }
+                return $true
+            }
+        } catch { }
 
-# Open the report in default browser
-Start-Process $OutputPath
+        # Fallback: create sheet by exporting a header-only object
+        try {
+            if (-not $Headers -or $Headers.Count -eq 0) { $Headers = @('__init__') }
+            $obj = [PSCustomObject]@{}
+            foreach ($h in $Headers) { $obj | Add-Member -NotePropertyName $h -NotePropertyValue '' -Force }
+            $null = ($obj | Export-Excel -Path $Path -WorksheetName $WorksheetName -Append)
+            return $true
+        } catch {
+            return $false
+        }
+    }
+
+    function Normalize-ItemForExcel {
+        param($item)
+        $result = [ordered]@{}
+        foreach ($prop in $item.PSObject.Properties) {
+            $name = [string]$prop.Name
+            $val = $prop.Value
+            $result[$name] = Convert-ToPlainValue -value $val -depth 0 -maxDepth 2
+        }
+        return [PSCustomObject]$result
+    }
+    
+    # Timestamp for unique filename
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $excelPath = "SchemaComparisonReport_$timestamp.xlsx"
+    $fullPath = Join-Path (Get-Location) $excelPath
+
+    # We'll build a single Excel package and add all sheets to it using -PassThru
+    if (Test-Path $fullPath) { Remove-Item $fullPath -Force }
+    $excelPackage = $null
+    
+    Write-Host "Step 1: Creating Summary sheet..." -ForegroundColor Cyan
+    
+    # Define categories
+    $allCategories = @('Tables', 'Columns', 'Indexes', 'Functions', 'StoredProcedures', 'DataTypes', 
+                      'Constraints', 'Views', 'Synonyms', 'TableTriggers', 'DatabaseTriggers', 
+                      'Keys', 'DatabaseOptions', 'FileInfo', 'Compatibility', 'Collation', 'VLF', 'Users', 'Roles', 'Schemas')
+    
+    # Build summary data
+    $summaryData = @()
+    foreach ($categoryName in $allCategories) {
+        $categoryData = $global:ComparisonData.$categoryName
+        if ($categoryData) {
+            $matchCount = 0
+            if ($categoryData.Matches) { $matchCount = $categoryData.Matches.Count }
+            $diffCount = 0
+            if ($categoryData.Differences) { $diffCount = $categoryData.Differences.Count }
+            $sourceCount = 0
+            if ($categoryData.SourceOnly) { $sourceCount = $categoryData.SourceOnly.Count }
+            $targetCount = 0
+            if ($categoryData.TargetOnly) { $targetCount = $categoryData.TargetOnly.Count }
+            $totalCount = $matchCount + $diffCount + $sourceCount + $targetCount
+            
+            if ($totalCount -gt 0) {
+                $summaryData += [PSCustomObject]@{
+                    Category = $categoryName
+                    Total = $totalCount
+                    Match = $matchCount
+                    Difference = $diffCount
+                    SourceOnly = $sourceCount
+                    TargetOnly = $targetCount
+                }
+            }
+        }
+    }
+    
+    # Export Summary sheet (path-based)
+    try {
+        # First write creates the package and returns it via -PassThru
+        $summarySheetName = Get-SafeSheetName 'Summary'
+        $null = ($summaryData | Export-Excel -Path $fullPath -WorksheetName $summarySheetName -AutoSize -AutoFilter -FreezeTopRow -TableStyle Medium2 -TableName "SummaryTable")
+        $importExcelVersion = (Get-Module ImportExcel -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1).Version
+        Write-Host "  Summary sheet written" -ForegroundColor DarkGray
+        Write-Host "  ImportExcel version: $importExcelVersion" -ForegroundColor Gray
+        Write-Host "  Excel export mode: PathAppend" -ForegroundColor Gray
+    } catch {
+        Write-Host "Error writing Summary sheet: $($_.Exception.Message)" -ForegroundColor Red
+        throw
+    }
+    
+    Write-Host "  Created Summary sheet with $($summaryData.Count) categories" -ForegroundColor Green
+    
+    # Export each category as separate sheet
+    Write-Host "`nStep 2: Creating individual category sheets..." -ForegroundColor Cyan
+    $sheetCount = 0
+    
+    foreach ($categoryName in $allCategories) {
+        $categoryData = $global:ComparisonData.$categoryName
+        
+        if (-not $categoryData) { continue }
+        
+        # Combine all items with status
+        $allItems = @()
+        
+        if ($categoryData.Matches -and $categoryData.Matches.Count -gt 0) {
+            foreach ($item in $categoryData.Matches) {
+                $newItem = Normalize-ItemForExcel $item
+                # If normalization produced an empty object (e.g., scalar input), emit an Item column
+                if (($newItem.PSObject.Properties | Measure-Object).Count -eq 0) {
+                    $newItem = [PSCustomObject]@{ Item = (Convert-ToPlainValue -value $item -depth 0 -maxDepth 2) }
+                }
+                $newItem | Add-Member -NotePropertyName "ComparisonStatus" -NotePropertyValue "Match" -Force
+                $allItems += $newItem
+            }
+        }
+        
+        if ($categoryData.Differences -and $categoryData.Differences.Count -gt 0) {
+            foreach ($item in $categoryData.Differences) {
+                $hasDiffMap = $false
+                try { $hasDiffMap = ($item.PSObject.Properties.Name -contains 'Differences') } catch { $hasDiffMap = $false }
+                if ($hasDiffMap -and $item.Differences -is [System.Collections.IDictionary]) {
+                    foreach ($colName in $item.Differences.Keys) {
+                        $srcVal = $null; $tgtVal = $null
+                        if ($item.Source -and ($item.Source -is [System.Data.DataRow] -or $item.Source.PSObject.Properties[$colName])) {
+                            try { $srcVal = $item.Source[$colName] } catch { $srcVal = $item.Source.PSObject.Properties[$colName].Value }
+                        }
+                        if ($item.Target -and ($item.Target -is [System.Data.DataRow] -or $item.Target.PSObject.Properties[$colName])) {
+                            try { $tgtVal = $item.Target[$colName] } catch { $tgtVal = $item.Target.PSObject.Properties[$colName].Value }
+                        }
+                        $row = [ordered]@{}
+                        $row['ComparisonStatus'] = 'Difference'
+                        # Try to include common identity fields when available
+                        foreach ($k in @('TABLE_SCHEMA','SCHEMA_NAME','TABLE_NAME','VIEW_NAME','INDEX_NAME','FUNCTION_NAME','PROCEDURE_NAME','TRIGGER_NAME','KEY_NAME','COLUMN_NAME')) {
+                            $val = $null
+                            if ($item.Source -and ($item.Source -is [System.Data.DataRow])) { try { $val = $item.Source[$k] } catch { } }
+                            if (-not $val -and $item.Target -and ($item.Target -is [System.Data.DataRow])) { try { $val = $item.Target[$k] } catch { } }
+                            if ($val) { $row[$k] = $val }
+                        }
+                        # If identity fields are still missing, derive from composite Key when present
+                        if (-not $row['TABLE_SCHEMA'] -and -not $row['SCHEMA_NAME'] -and $item.PSObject.Properties['Key']) {
+                            $parts = ("" + $item.Key) -split '\|'
+                            if ($parts.Length -ge 1) { $row['SCHEMA_NAME'] = $parts[0] }
+                            if ($parts.Length -ge 2) { $row['TABLE_NAME'] = $parts[1] }
+                            if ($parts.Length -ge 3) { $row['COLUMN_NAME'] = $parts[2] }
+                        }
+                        $row['DifferenceColumn'] = $colName
+                        $row['SourceValue'] = (Convert-ToPlainValue -value $srcVal -depth 0 -maxDepth 1)
+                        $row['TargetValue'] = (Convert-ToPlainValue -value $tgtVal -depth 0 -maxDepth 1)
+                        $allItems += [PSCustomObject]$row
+                    }
+                } else {
+                    $newItem = Normalize-ItemForExcel $item
+                    if (($newItem.PSObject.Properties | Measure-Object).Count -eq 0) {
+                        $newItem = [PSCustomObject]@{ Item = (Convert-ToPlainValue -value $item -depth 0 -maxDepth 2) }
+                    }
+                    $newItem | Add-Member -NotePropertyName "ComparisonStatus" -NotePropertyValue "Difference" -Force
+                    $allItems += $newItem
+                }
+            }
+        }
+        
+        if ($categoryData.SourceOnly -and $categoryData.SourceOnly.Count -gt 0) {
+            foreach ($item in $categoryData.SourceOnly) {
+                $newItem = Normalize-ItemForExcel $item
+                if (($newItem.PSObject.Properties | Measure-Object).Count -eq 0) {
+                    $newItem = [PSCustomObject]@{ Item = (Convert-ToPlainValue -value $item -depth 0 -maxDepth 2) }
+                }
+                $newItem | Add-Member -NotePropertyName "ComparisonStatus" -NotePropertyValue "SourceOnly" -Force
+                $allItems += $newItem
+            }
+        }
+        
+        if ($categoryData.TargetOnly -and $categoryData.TargetOnly.Count -gt 0) {
+            foreach ($item in $categoryData.TargetOnly) {
+                $newItem = Normalize-ItemForExcel $item
+                if (($newItem.PSObject.Properties | Measure-Object).Count -eq 0) {
+                    $newItem = [PSCustomObject]@{ Item = (Convert-ToPlainValue -value $item -depth 0 -maxDepth 2) }
+                }
+                $newItem | Add-Member -NotePropertyName "ComparisonStatus" -NotePropertyValue "TargetOnly" -Force
+                $allItems += $newItem
+            }
+        }
+        if ($allItems.Count -gt 0) {
+            # Ensure a clear status column appears in Excel as the first column
+            # and sort rows by status for readability: Differences, SourceOnly, TargetOnly, Match
+            $statusOrder = @{ 'Difference' = 1; 'SourceOnly' = 2; 'TargetOnly' = 3; 'Match' = 4 }
+            $allItems = $allItems | Sort-Object -Property @{ Expression = { $statusOrder[[string]($_.ComparisonStatus)] } }, @{ Expression = { $_.ToString() } }
+            
+            # Build a unified header set so Excel shows columns for differences too
+            $allPropNames = New-Object System.Collections.Generic.HashSet[string]
+            $mustHave = @('ComparisonStatus','DifferenceColumn','SourceValue','TargetValue')
+            foreach ($n in $mustHave) { $allPropNames.Add($n) | Out-Null }
+            foreach ($it in $allItems) {
+                foreach ($p in $it.PSObject.Properties) { $allPropNames.Add([string]$p.Name) | Out-Null }
+            }
+            # Preferred column order: put diff details immediately after status so they're visible
+            $identityCols = @('TABLE_SCHEMA','SCHEMA_NAME','TABLE_NAME','VIEW_NAME','INDEX_NAME','FUNCTION_NAME','PROCEDURE_NAME','TRIGGER_NAME','KEY_NAME','COLUMN_NAME')
+            $otherCols = ($allPropNames | Where-Object { $_ -notin ($mustHave + $identityCols) -and $_ -ne 'ComparisonStatus' })
+            $finalOrder = @('ComparisonStatus','DifferenceColumn','SourceValue','TargetValue') + $identityCols + $otherCols
+            
+            $allItemsForExport = @()
+            foreach ($it in $allItems) {
+                $row = [ordered]@{}
+                foreach ($col in $finalOrder) {
+                    if ($col -eq 'ComparisonStatus') { $row[$col] = ([string]$it.ComparisonStatus); continue }
+                    $prop = $it.PSObject.Properties[$col]
+                    if ($prop) { $row[$col] = $prop.Value } else { $row[$col] = '' }
+                }
+                $allItemsForExport += [PSCustomObject]$row
+            }
+            # Compute safe unique sheet name
+            $sheetName = Get-SafeSheetName $categoryName
+            
+            Write-Host "  Creating sheet: $sheetName ($($allItems.Count) items)" -ForegroundColor Gray
+
+            # Sanitize table name and ensure uniqueness
+            $tableNameBase = ($sheetName -replace "[^A-Za-z0-9]", "")
+            if ([string]::IsNullOrWhiteSpace($tableNameBase)) { $tableNameBase = "Sheet" }
+            $tableName = "$tableNameBase`Table"
+            
+            # Decide sheet name; we'll append to file path (ImportExcel creates sheet if missing)
+            $effectiveSheetName = $sheetName
+            
+
+            try {
+                # Ensure we have an open package (defensive in case -PassThru failed)
+                if (-not $excelPackage) {
+                    Write-Host "  Re-opening ExcelPackage (defensive)" -ForegroundColor DarkGray
+                    try { $excelPackage = Open-ExcelPackage -Path $fullPath } catch { $excelPackage = $null }
+                }
+                # Guarantee unique table name to avoid cross-sheet collisions
+                $tableAttempt = 0
+                $maxAttempts = 5
+                $wrote = $false
+                while (-not $wrote -and $tableAttempt -lt $maxAttempts) {
+                    $effectiveTableName = if ($tableAttempt -eq 0) { $tableName } else { "$tableName" + ($tableAttempt) }
+                    Write-Host "    [ExcelPackage] Writing worksheet: $effectiveSheetName, table: $effectiveTableName" -ForegroundColor DarkGray
+                    try {
+                        # Path-based write; ImportExcel creates workbook/sheet if needed
+                        $allItemsForExport | Export-Excel -Path $fullPath -WorksheetName $effectiveSheetName -AutoSize -AutoFilter -FreezeTopRow -TableStyle Medium2 -TableName $effectiveTableName -Append | Out-Null
+                        $wrote = $true
+                    } catch {
+                        $tableAttempt++
+                        if ($tableAttempt -ge $maxAttempts) { throw }
+                    }
+                }
+                Write-Host "    -> Sheet written" -ForegroundColor DarkGray
+            } catch {
+                Write-Host "Error writing sheet '$effectiveSheetName': $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host ("Exception details: " + ($_.Exception | Out-String)) -ForegroundColor DarkGray
+                # Fallback: write without table formatting if table name conflicts or other styling errors occur
+                try {
+                    Write-Host "    [Fallback] Writing without table formatting" -ForegroundColor Yellow
+                    $allItemsForExport | Export-Excel -Path $fullPath -WorksheetName $effectiveSheetName -AutoSize -AutoFilter -FreezeTopRow -Append | Out-Null
+                    Write-Host "    -> Sheet written (fallback without table)" -ForegroundColor Yellow
+                } catch {
+                    Write-Host "    -> FATAL: Could not write sheet '$effectiveSheetName': $($_.Exception.Message)" -ForegroundColor Red
+                    continue
+                }
+            }
+            
+            $sheetCount++
+        }
+    }
+    
+    # Finalize and save workbook
+    try {
+        Write-Host "`nExcel export completed successfully!" -ForegroundColor Green
+    } catch {
+        Write-Host "Error saving Excel package: $($_.Exception.Message)" -ForegroundColor Red
+        throw
+    }
+    Write-Host "  Summary: 1 sheet" -ForegroundColor Gray
+    Write-Host "  Categories: $sheetCount sheets" -ForegroundColor Gray
+    Write-Host "  Total: $($sheetCount + 1) sheets" -ForegroundColor Gray
+    Write-Host "`nLocation: $fullPath" -ForegroundColor Cyan
+    
+    # Only open if NOT launched from GUI
+    if (-not $env:LAUNCHED_FROM_GUI) {
+        Write-Host "`nOpening Excel file..." -ForegroundColor Yellow
+        Start-Process $fullPath
+    }
+    
+} elseif ($MultiPage) {
+    # Multi-page mode: Create directory structure and split into multiple files
+    Write-Host "`nMulti-Page Mode: Creating directory structure..." -ForegroundColor Cyan
+    
+    # Create directory name with timestamp and database names
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $sourceName = $SourceServer.Replace("\", "_").Replace(".", "_") + "_" + $SourceDatabase
+    $targetName = $TargetServer.Replace("\", "_").Replace(".", "_") + "_" + $TargetDatabase
+    $dirName = "${timestamp}_${sourceName}_vs_${targetName}_SchemaComparison"
+    $reportDir = Join-Path (Get-Location) $dirName
+    
+    if (-not (Test-Path $reportDir)) {
+        New-Item -Path $reportDir -ItemType Directory -Force | Out-Null
+    }
+    
+    Write-Host "Report directory: $reportDir" -ForegroundColor Green
+    
+    # Create multi-page structure with lazy-loaded sections
+    Write-Host "Creating multi-page structure..." -ForegroundColor Cyan
+    
+    # Find all section IDs by looking for section-header elements with id
+    $sectionIds = @()
+    $sectionPattern = '<div class="section-header"[^>]+id="([^"]+)"'
+    $sectionMatches = [regex]::Matches($htmlReport, $sectionPattern)
+    foreach ($match in $sectionMatches) {
+        $sectionIds += $match.Groups[1].Value.Replace('-header', '')
+    }
+    
+    Write-Host "Found $($sectionIds.Count) sections" -ForegroundColor Yellow
+    
+    $sectionsStart = '<div id="sectionsContainer"'
+    $headerEndPos = $htmlReport.IndexOf($sectionsStart)
+    
+    if ($headerEndPos -lt 0) {
+        Write-Host "Warning: Could not find sections container. Saving full HTML." -ForegroundColor Yellow
+        $indexPath = Join-Path $reportDir "index.html"
+        $htmlReport | Out-File -FilePath $indexPath -Encoding UTF8
+        Write-Host "Created index.html (fallback)" -ForegroundColor Yellow
+    } else {
+        # Extract each section and save to separate content files
+        foreach ($sectionId in $sectionIds) {
+            $contentFileName = "$sectionId-content.html"
+            $contentFilePath = Join-Path $reportDir $contentFileName
+            
+            $headerIdPattern = "$sectionId-header"
+            $headerPattern = "<div class=`"section-header`"[^>]+id=`"$headerIdPattern`""
+            $headerMatch = [regex]::Match($htmlReport, $headerPattern)
+            
+            if ($headerMatch.Success) {
+                $headerPos = $headerMatch.Index
+                $sectionStartPos = $htmlReport.LastIndexOf('<div class="section"', $headerPos)
+                
+                if ($sectionStartPos -ge 0) {
+                    $startPos = $sectionStartPos
+                    $nextSectionStart = $htmlReport.IndexOf('<div class="section"', $startPos + 100)
+                    
+                    $endPos = if ($nextSectionStart -gt $startPos) { $nextSectionStart } else {
+                        $tempPos = $htmlReport.IndexOf('</div></div>    <script', $startPos)
+                        if ($tempPos -gt 0) { $tempPos } else { $htmlReport.Length }
+                    }
+                    
+                    $sectionContent = $htmlReport.Substring($startPos, $endPos - $startPos)
+                    $sectionContent = $sectionContent -replace 'class="section-content collapsed"', 'class="section-content"'
+                    
+                    $sectionContent | Out-File -FilePath $contentFilePath -Encoding UTF8
+                    
+                    $nameMatch = [regex]::Match($sectionContent, '<h2>([^<]+)</h2>')
+                    $sectionName = if ($nameMatch.Success) { $nameMatch.Groups[1].Value } else { $sectionId }
+                    Write-Host "  Created $contentFileName ($sectionName)" -ForegroundColor Gray
+                }
+            }
+        }
+        
+        # Create index.html with just summary cards (truly lightweight)
+        $summaryEndMarker = '<div id="sectionsContainer"'
+        $summaryEndPos = $htmlReport.IndexOf($summaryEndMarker)
+        $scriptStartMarker = '</div></div>    <script>'
+        $scriptStartPos = $htmlReport.IndexOf($scriptStartMarker)
+        
+        # Build lightweight index: header + summary cards + empty container + scripts
+        $indexHtml = $htmlReport.Substring(0, $summaryEndPos)
+        $indexHtml += '<div id="sectionsContainer"></div>'
+        $indexHtml += $htmlReport.Substring($scriptStartPos)
+        
+        # Replace all onclick handlers to navigate to section HTML files
+        $indexHtml = $indexHtml -replace 'onclick="selectAllFiltersAndShowAll\(''([^'']+)''\)"', 'onclick="navigateToSection(''$1'')"'
+        
+        # Add "View Selected Sections" button after "Sort by Category" button
+        $indexHtml = $indexHtml.Replace('onclick="window.sortCategoryAndSections && window.sortCategoryAndSections()">Sort by Category</button>', 'onclick="window.sortCategoryAndSections && window.sortCategoryAndSections()">Sort by Category</button>' + "`n" + '            <button id="view-selected-btn" class="sort-btn" style="background: rgba(40, 167, 69, 0.2); border-color: rgba(40, 167, 69, 0.5);" title="View all right-click selected sections in one page" onclick="viewSelectedSections()">View Selected Sections</button>')
+        
+        # Add navigation script to index.html (override the original function)
+        $indexNavScript = @"
+
+<script>
+// Override navigateToSection for multi-page navigation from index
+function navigateToSection(sectionName) {
+    const sectionId = sectionName.toLowerCase().replace(/\s+/g, '-');
+    window.location.href = sectionId + '.html';
+}
+// View all selected sections in one combined page
+function viewSelectedSections() {
+    const selectedCards = document.querySelectorAll('.summary-card.selected');
+    
+    if (selectedCards.length === 0) {
+        alert('Please right-click on summary cards to select sections first.');
+        return;
+    }
+    
+    // Collect section IDs from selected cards
+    const sectionIds = [];
+    selectedCards.forEach(card => {
+        const onclick = card.getAttribute('oncontextmenu');
+        if (onclick) {
+            const match = onclick.match(/markSummarySelected\([^,]+,\s*[^,]+,\s*'([^']+)'\)/);
+            if (match) {
+                sectionIds.push(match[1].toLowerCase().replace(/\s+/g, '-'));
+            }
+        }
+    });
+    
+    alert('Loading ' + selectedCards.length + ' selected sections into a combined view...');
+    
+    // Build index-temp.html URL with selected sections as query parameter
+    const params = sectionIds.join(',');
+    window.location.href = 'index-temp.html?sections=' + encodeURIComponent(params);
+}
+</script>
+"@
+        
+        # Add fallback sort functions in case the main script bundle was trimmed in multi-page index
+        $fallbackSortScript = @"
+
+<script>
+(function(){
+  function titleOf(card){
+    var h = card && card.querySelector && card.querySelector('.summary-header h3');
+    return (h && h.textContent ? h.textContent : '').toLowerCase();
+  }
+  if (!window.sortAlphaAndSections){
+    window.sortAlphaAndSections = function(){
+      var c = document.getElementById('summaryCards');
+      if(!c) return;
+      var arr = Array.prototype.slice.call(c.children).filter(function(x){ return x.classList && x.classList.contains('summary-card'); });
+      arr.sort(function(a,b){ return titleOf(a).localeCompare(titleOf(b)); });
+      var frag = document.createDocumentFragment(); arr.forEach(function(x){ frag.appendChild(x); });
+      c.appendChild(frag);
+    }
+  }
+  if (!window.sortCategoryAndSections){
+    window.sortCategoryAndSections = function(){
+      var weights = { 'schemas':1,'tables':1,'columns':1,'indexes':1,'functions':1,'stored procedures':1,'stored-procedures':1,'views':1,'synonyms':1,'constraints':1,'keys':1,'table triggers':1,'database triggers':1,'query store':2,'vlf information':2,'database options':3,'file information':3,'users':3,'roles':3,'external resources':3,'data types':3 };
+      var c = document.getElementById('summaryCards');
+      if(!c) return;
+      var arr = Array.prototype.slice.call(c.children).filter(function(x){ return x.classList && x.classList.contains('summary-card'); });
+      arr.sort(function(a,b){
+        var at = titleOf(a), bt = titleOf(b);
+        var aw = (weights[at]!==undefined?weights[at]:99), bw = (weights[bt]!==undefined?weights[bt]:99);
+        if (aw !== bw) return aw - bw; return at.localeCompare(bt);
+      });
+      var frag = document.createDocumentFragment(); arr.forEach(function(x){ frag.appendChild(x); });
+      c.appendChild(frag);
+    }
+  }
+})();
+</script>
+"@
+
+        $indexHtml = $indexHtml -replace '</body>', ($indexNavScript + $fallbackSortScript + '</body>')
+        
+        # Save index.html
+        $indexPath = Join-Path $reportDir "index.html"
+        $indexHtml | Out-File -FilePath $indexPath -Encoding UTF8
+        
+        $indexSize = (Get-Item $indexPath).Length / 1KB
+        Write-Host "Created index.html ($([math]::Round($indexSize, 1)) KB)" -ForegroundColor Green
+        
+        # Extract summary cards HTML - find the end more reliably
+        $summaryCardsStart = $htmlReport.IndexOf('<div class="summary">')
+        $summaryCardsEnd = $htmlReport.IndexOf('</div><div id="sectionsContainer">')
+        
+        if ($summaryCardsStart -lt 0 -or $summaryCardsEnd -lt 0 -or $summaryCardsEnd -le $summaryCardsStart) {
+            Write-Host "Warning: Could not extract summary cards. Section pages won't have navigation." -ForegroundColor Yellow
+            $summaryCardsHtml = ""
+        } else {
+            # Include the closing </div> for the summary
+            $summaryCardsHtml = $htmlReport.Substring($summaryCardsStart, $summaryCardsEnd - $summaryCardsStart + 6)
+        }
+        
+        # Update summary cards onclick for navigation between section pages
+        if ($summaryCardsHtml -ne "") {
+            # Use regex to replace all onclick handlers at once  
+            $summaryCardsForSections = $summaryCardsHtml -replace 'onclick="selectAllFiltersAndShowAll\(''([^'']+)''\)"', 'onclick="navigateToSection(''$1'')"'
+            
+            # Store the updated summary cards (navigation override will be added to each page separately)
+            $summaryCardsForSections = $summaryCardsForSections
+        } else {
+            $summaryCardsForSections = ""
+        }
+        
+        # Now create full section HTML pages with navigation
+        # Extract header WITHOUT summary cards (to avoid duplication)
+        $summaryStartInHeader = $htmlReport.IndexOf('<div class="summary">')
+        if (($summaryStartInHeader -ge 0) -and ($summaryStartInHeader -lt $headerEndPos)) {
+            # Header part is everything BEFORE the summary section
+            $headerPart = $htmlReport.Substring(0, $summaryStartInHeader)
+        } else {
+            $headerPart = $htmlReport.Substring(0, $headerEndPos)
+        }
+        $scriptPart = $htmlReport.Substring($scriptStartPos)
+        
+        foreach ($sectionId in $sectionIds) {
+            $htmlFileName = "$sectionId.html"
+            $htmlFilePath = Join-Path $reportDir $htmlFileName
+            
+            # Build full page with summary cards + this section
+            $sectionPageHtml = $headerPart
+            
+            # Add "View Selected Sections" button to section pages too
+            $sectionPageHtml = $sectionPageHtml.Replace('onclick="window.sortCategoryAndSections && window.sortCategoryAndSections()">Sort by Category</button>', 'onclick="window.sortCategoryAndSections && window.sortCategoryAndSections()">Sort by Category</button>' + "`n" + '            <button id="view-selected-btn" class="sort-btn" style="background: rgba(40, 167, 69, 0.2); border-color: rgba(40, 167, 69, 0.5);" title="View all right-click selected sections in one page" onclick="viewSelectedSections()">View Selected Sections</button>')
+            
+            $sectionPageHtml += @"
+<div style="margin: 20px; padding: 10px; background: #f0f9ff; border-left: 4px solid #2563eb;">
+    <a href='index.html' style='color: #2563eb; text-decoration: none; font-size: 16px; font-weight: bold;'>&lt;- Back to Summary</a>
+</div>
+"@
+            # Add summary cards with updated navigation
+            $sectionPageHtml += $summaryCardsForSections
+            
+            # Add section content
+            $sectionPageHtml += "<div id='sectionsContainer'>"
+            $contentFileName = "$sectionId-content.html"
+            $contentFilePath = Join-Path $reportDir $contentFileName
+            if (Test-Path $contentFilePath) {
+                $sectionContent = Get-Content $contentFilePath -Raw
+                $sectionPageHtml += $sectionContent
+                $sectionPageHtml += '</div>'
+                $sectionPageHtml += $scriptPart
+                
+                # Override the navigateToSection function AFTER all other scripts
+                $navOverride = @"
+
+<script>
+// Override navigateToSection for multi-page navigation
+// Store original function
+const originalNavigateToSection = navigateToSection;
+
+function navigateToSection(sectionName) {
+    const sectionId = sectionName.toLowerCase().replace(/\s+/g, '-');
+    
+    // Check if we're already on this section's page
+    const currentPage = window.location.pathname.split('/').pop();
+    const targetPage = sectionId + '.html';
+    
+    if (currentPage !== targetPage) {
+        // Navigate to the section page
+        window.location.href = sectionId + '.html';
+    }
+    // If already on the correct page, do nothing (don't scroll/expand)
+}
+
+// View all selected sections in one combined page
+async function viewSelectedSections() {
+    const selectedCards = document.querySelectorAll('.summary-card.selected');
+    
+    if (selectedCards.length === 0) {
+        alert('Please right-click on summary cards to select sections first.');
+        return;
+    }
+    
+    // Collect section IDs from selected cards
+    const sectionIds = [];
+    selectedCards.forEach(card => {
+        const onclick = card.getAttribute('oncontextmenu');
+        if (onclick) {
+            const match = onclick.match(/markSummarySelected\([^,]+,\s*[^,]+,\s*'([^']+)'\)/);
+            if (match) {
+                sectionIds.push(match[1].toLowerCase().replace(/\s+/g, '-'));
+            }
+        }
+    });
+    
+    alert('Loading ' + selectedCards.length + ' selected sections into a combined view...');
+    
+    // Build index-temp.html URL with selected sections as query parameter
+    const params = sectionIds.join(',');
+    window.location.href = 'index-temp.html?sections=' + encodeURIComponent(params);
+}
+</script>
+"@
+            # Add right-click selection support script to section pages
+            $rightClickSupport = @"
+
+<script>
+(function(){
+  window.markSummarySelected = window.markSummarySelected || function(event, cardEl, sectionId){
+    if (event.button !== 2 && event.type !== 'contextmenu') { return true; }
+    if (event.preventDefault) event.preventDefault();
+    if (event.stopPropagation) event.stopPropagation();
+    try {
+      if (cardEl.classList.contains('selected')) {
+        cardEl.classList.remove('selected');
+      } else {
+        cardEl.classList.add('selected');
+      }
+    } catch(e) { console.error('markSummarySelected (section page) error', e); }
+    return false;
+  };
+})();
+</script>
+"@
+            $sectionPageHtml = $sectionPageHtml -replace '</body>', ($navOverride + $rightClickSupport + '</body>')
+                
+                $sectionPageHtml | Out-File -FilePath $htmlFilePath -Encoding UTF8
+                Write-Host "  Created $htmlFileName" -ForegroundColor Gray
+                
+                # Keep the content file - we'll need it for index-temp.html loading
+                # Remove-Item $contentFilePath -Force
+            }
+        }
+        
+        # Create index-temp.html with ALL sections embedded (for combined view)
+        Write-Host "Creating index-temp.html for multi-section view..." -ForegroundColor Cyan
+        $indexTempPath = Join-Path $reportDir "index-temp.html"
+        
+        # Build index-temp with embedded sections
+        $indexTempHtml = $headerPart
+        
+        # Add "View Selected Sections" button to index-temp as well
+        $indexTempHtml = $indexTempHtml.Replace('onclick="window.sortCategoryAndSections && window.sortCategoryAndSections()">Sort by Category</button>', 'onclick="window.sortCategoryAndSections && window.sortCategoryAndSections()">Sort by Category</button>' + "`n" + '            <button id="view-selected-btn" class="sort-btn" style="background: rgba(40, 167, 69, 0.2); border-color: rgba(40, 167, 69, 0.5);" title="View all right-click selected sections in one page" onclick="viewSelectedSections()">View Selected Sections</button>')
+        
+        $indexTempHtml += @"
+<div style="margin: 20px; padding: 15px; background: #fff3cd; border-left: 4px solid #ffc107;">
+    <h3 style="margin: 0 0 10px 0;">Combined View - Selected Sections</h3>
+    <p style="margin: 0; color: #856404;">Showing selected sections. <a href='index.html' style='color: #2563eb;'>&lt;- Back to Main Dashboard</a></p>
+</div>
+<!-- Summary Cards Container (will be filtered by JavaScript) -->
+<div class="summary">
+    <h2>Selected Sections Summary</h2>
+    <div id="summaryCards" class="summary-cards">
+"@
+        # Add all summary cards (keep class intact for sorting animations)
+        $indexTempHtml += $summaryCardsHtml
+        
+        $indexTempHtml += @"
+    </div>
+</div>
+<div id="sectionsContainer">
+```
+</div>
+"@
+        
+        # Embed all section content with data-section-id attributes (hidden by default)
+        foreach ($secId in $sectionIds) {
+            $contentFileName = "$secId-content.html"
+            $contentFilePath = Join-Path $reportDir $contentFileName
+            if (Test-Path $contentFilePath) {
+                $secContent = Get-Content $contentFilePath -Raw
+                $indexTempHtml += "<div class='embedded-section' data-section-id='$secId' style='display:none;'>$secContent</div>`n"
+            }
+        }
+        
+        $indexTempHtml += "</div>"
+        $indexTempHtml += $scriptPart
+        
+        # Add script to show only selected sections AND summary cards
+        $combinedViewScript = @"
+
+<script>
+// Show only selected sections and summary cards based on URL parameter
+(function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const sectionsParam = urlParams.get('sections');
+    
+    if (!sectionsParam) {
+        document.getElementById('sectionsContainer').innerHTML = '<div style="text-align: center; padding: 50px; color: #999;">No sections selected. Use "View Selected Sections" button.</div>';
+        return;
+    }
+    
+    const selectedSections = sectionsParam.split(',');
+    const allEmbedded = document.querySelectorAll('.embedded-section');
+    
+    // Show only selected sections and remove their internal summary cards
+    selectedSections.forEach(sectionId => {
+        const elem = document.querySelector('.embedded-section[data-section-id="' + sectionId + '"]');
+        if (elem) {
+            elem.style.display = 'block';
+            
+            // Remove any "Schema Drift Summary" or summary cards within the section
+            const innerSummary = elem.querySelector('.summary');
+            if (innerSummary) {
+                innerSummary.remove();
+            }
+        }
+    });
+    
+    // Remove sections that weren't selected
+    allEmbedded.forEach(elem => {
+        if (!selectedSections.includes(elem.getAttribute('data-section-id'))) {
+            elem.remove();
+        }
+    });
+    
+    // Show only selected summary cards (keep class intact for sorting animations)
+    const allCards = document.querySelectorAll('.summary-card');
+    
+    // First, hide all cards
+    allCards.forEach(card => {
+        card.style.display = 'none';
+    });
+    
+    // Then show only selected ones
+    selectedSections.forEach(sectionId => {
+        allCards.forEach(card => {
+            const onclick = card.getAttribute('oncontextmenu');
+            if (onclick) {
+                const match = onclick.match(/markSummarySelected\([^,]+,\s*[^,]+,\s*'([^']+)'\)/);
+                if (match) {
+                    const cardSectionId = match[1].toLowerCase().replace(/\s+/g, '-');
+                    if (cardSectionId === sectionId) {
+                        // Show and mark as selected
+                        card.style.display = 'block';
+                        card.classList.add('selected');
+                    }
+                }
+            }
+        });
+    });
+})();
+</script>
+"@
+        
+        # Add sorting/animation fallback for index-temp (selected sections combined view)
+        $indexTempFallback = @"
+
+<script>
+(function(){
+  function titleOf(card){
+    var h = card && card.querySelector && card.querySelector('.summary-header h3');
+    return (h && h.textContent ? h.textContent : '').toLowerCase();
+  }
+  function animateReorder(container, newOrder){
+    if(!container) return;
+    var D=500, easing='cubic-bezier(0.16, 1, 0.3, 1)';
+    var rects=new Map();
+    Array.prototype.forEach.call(container.children,function(el){
+      if(!(el instanceof HTMLElement)) return; rects.set(el, el.getBoundingClientRect());
+    });
+    var frag=document.createDocumentFragment(); newOrder.forEach(function(el){ frag.appendChild(el); });
+    container.appendChild(frag);
+    newOrder.forEach(function(el){
+      if(!(el instanceof HTMLElement)) return; var first=rects.get(el); var last=el.getBoundingClientRect();
+      if(!first) return; var dx=first.left-last.left, dy=first.top-last.top;
+      el.style.transform='translate('+dx+'px,'+dy+'px)'; el.style.transition='none';
+      requestAnimationFrame(function(){
+        el.style.transition='transform '+D+'ms '+easing+', opacity '+D+'ms '+easing;
+        el.style.transform='translate(0,0)';
+      });
+    });
+    setTimeout(function(){ newOrder.forEach(function(el){ el.style.transition=''; el.style.transform=''; }); }, D+20);
+  }
+  if (!window.sortAlphaAndSections){
+    window.sortAlphaAndSections = function(){
+      var c = document.getElementById('summaryCards');
+      if(!c) return;
+      var cards = Array.prototype.slice.call(c.getElementsByClassName('summary-card'));
+      cards.sort(function(a,b){ return titleOf(a).localeCompare(titleOf(b)); });
+      animateReorder(c, cards);
+      var sec = document.getElementById('sectionsContainer');
+      if (sec){
+        var sections = Array.prototype.slice.call(sec.querySelectorAll('.section'));
+        sections.sort(function(a,b){
+          var at=(a.querySelector('.section-header h2')||{}).textContent||''; at=at.toLowerCase();
+          var bt=(b.querySelector('.section-header h2')||{}).textContent||''; bt=bt.toLowerCase();
+          return at.localeCompare(bt);
+        });
+        animateReorder(sec, sections);
+      }
+    }
+  }
+  if (!window.sortCategoryAndSections){
+    window.sortCategoryAndSections = function(){
+      var weights = { 'schemas':1,'tables':1,'columns':1,'indexes':1,'functions':1,'stored procedures':1,'stored-procedures':1,'views':1,'synonyms':1,'constraints':1,'keys':1,'table triggers':1,'database triggers':1,'query store':2,'vlf information':2,'database options':3,'file information':3,'users':3,'roles':3,'external resources':3,'data types':3 };
+      var c = document.getElementById('summaryCards'); if(!c) return;
+      var cards = Array.prototype.slice.call(c.getElementsByClassName('summary-card'));
+      cards.sort(function(a,b){
+        var at = titleOf(a), bt = titleOf(b);
+        var aw = (weights[at]!==undefined?weights[at]:99), bw = (weights[bt]!==undefined?weights[bt]:99);
+        if (aw !== bw) return aw - bw; return at.localeCompare(bt);
+      });
+      animateReorder(c, cards);
+      var sec = document.getElementById('sectionsContainer');
+      if (sec){
+        var sections = Array.prototype.slice.call(sec.querySelectorAll('.section'));
+        sections.sort(function(a,b){
+          var aw = +(a.getAttribute('data-category-weight')||99);
+          var bw = +(b.getAttribute('data-category-weight')||99);
+          if (aw!==bw) return aw-bw;
+          var at=(a.querySelector('.section-header h2')||{}).textContent||''; at=at.toLowerCase();
+          var bt=(b.querySelector('.section-header h2')||{}).textContent||''; bt=bt.toLowerCase();
+          return at.localeCompare(bt);
+        });
+        animateReorder(sec, sections);
+      }
+    }
+  }
+})();
+</script>
+"@
+
+        $indexTempHtml = $indexTempHtml -replace '</body>', ($combinedViewScript + $indexTempFallback + '</body>')
+        $indexTempHtml | Out-File -FilePath $indexTempPath -Encoding UTF8
+        Write-Host "Created index-temp.html for combined view" -ForegroundColor Green
+    }
+    
+    Write-Host "`nMulti-page report generated successfully!" -ForegroundColor Green
+    Write-Host "Location: $reportDir" -ForegroundColor Cyan
+    
+    # Only open if NOT launched from GUI (GUI will open it)
+    if (-not $env:LAUNCHED_FROM_GUI) {
+        Write-Host "`nOpening report in default browser..." -ForegroundColor Yellow
+        Start-Process $indexPath
+    }
+} else {
+    # Single page mode (default)
+    $htmlReport | Out-File -FilePath $OutputPath -Encoding UTF8
+    
+    Write-Host "`nReport generated successfully!" -ForegroundColor Green
+    Write-Host "Location: $OutputPath" -ForegroundColor Cyan
+    
+    # Only open if NOT launched from GUI (GUI will open it)
+    if (-not $env:LAUNCHED_FROM_GUI) {
+        Write-Host "`nOpening report in default browser..." -ForegroundColor Yellow
+        Start-Process $OutputPath
+    }
+}
+
+# Note: Excel export mode now uses HTML auto-export (see above in the if ($ExportExcel) block)
+# The old PowerShell COM automation approach has been removed in favor of browser-based export
 
 Write-Host "`nDatabase Schema Drift Detection completed!" -ForegroundColor Green
 
 # Clean up variables after completion to free memory
 Write-Verbose "Cleaning up variables after completion..."
 Clear-CachedVariables
+
+# Explicit exit code for success
+exit 0
